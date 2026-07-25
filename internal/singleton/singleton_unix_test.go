@@ -44,6 +44,23 @@ func TestAcquireIsExclusive(t *testing.T) {
 	}
 }
 
+func TestReleaseIsNotSilentOnASecondCall(t *testing.T) {
+	isolateLock(t)
+
+	release, err := Acquire()
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if err := release(); err != nil {
+		t.Fatalf("first release: %v", err)
+	}
+	// The doc comment requires exactly one call; a second call must still
+	// report an error rather than panic on the now-closed descriptor.
+	if err := release(); err == nil {
+		t.Error("releasing an already-released guard silently succeeded")
+	}
+}
+
 func TestAcquireReportsUnusablePath(t *testing.T) {
 	original := lockPath
 	// A path whose parent directory does not exist cannot be created.

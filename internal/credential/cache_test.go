@@ -32,6 +32,19 @@ func newCacheOnFile(t *testing.T, contents []byte) (*Cache, string, *time.Time) 
 	return c, path, &clock
 }
 
+func TestNewCacheDefaultsAnInvalidSkewMargin(t *testing.T) {
+	for _, given := range []time.Duration{0, -time.Minute} {
+		c := NewCache("", given)
+		if c.skewMargin != DefaultSkewMargin {
+			t.Errorf("NewCache(skew=%v).skewMargin = %v, want the default %v", given, c.skewMargin, DefaultSkewMargin)
+		}
+	}
+	const explicit = 10 * time.Minute
+	if c := NewCache("", explicit); c.skewMargin != explicit {
+		t.Errorf("an explicit positive skew margin must be honoured, got %v", c.skewMargin)
+	}
+}
+
 func TestCacheReadsOnceWhileTokenIsFresh(t *testing.T) {
 	expiry := time.Date(2026, 7, 25, 23, 0, 0, 0, time.UTC)
 	c, path, _ := newCacheOnFile(t, documentExpiringAt(expiry, "TOKEN-A"))

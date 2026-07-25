@@ -45,6 +45,55 @@ func TestMoneyKeepsFullInt64Range(t *testing.T) {
 	}
 }
 
+func TestUtilizationImplementsMeter(t *testing.T) {
+	reset := time.Date(2026, 7, 25, 20, 0, 0, 0, time.UTC)
+	var m Meter = &Utilization{MeterID: "v:session", Name: "Session", Percent: 42, Reset: reset, Level: SeverityWarning}
+
+	if m.ID() != "v:session" {
+		t.Errorf("ID() = %q, want %q", m.ID(), "v:session")
+	}
+	if m.Label() != "Session" {
+		t.Errorf("Label() = %q, want %q", m.Label(), "Session")
+	}
+	if m.Severity() != SeverityWarning {
+		t.Errorf("Severity() = %v, want %v", m.Severity(), SeverityWarning)
+	}
+	if !m.ResetsAt().Equal(reset) {
+		t.Errorf("ResetsAt() = %v, want %v", m.ResetsAt(), reset)
+	}
+}
+
+func TestBalanceImplementsMeter(t *testing.T) {
+	reset := time.Date(2026, 7, 25, 20, 0, 0, 0, time.UTC)
+	var m Meter = &Balance{MeterID: "v:credits", Name: "Credits", Level: SeverityCritical, Reset: reset}
+
+	if m.ID() != "v:credits" {
+		t.Errorf("ID() = %q, want %q", m.ID(), "v:credits")
+	}
+	if m.Label() != "Credits" {
+		t.Errorf("Label() = %q, want %q", m.Label(), "Credits")
+	}
+	if m.Severity() != SeverityCritical {
+		t.Errorf("Severity() = %v, want %v", m.Severity(), SeverityCritical)
+	}
+	if !m.ResetsAt().Equal(reset) {
+		t.Errorf("ResetsAt() = %v, want %v", m.ResetsAt(), reset)
+	}
+}
+
+func TestSeverityStringKnownValues(t *testing.T) {
+	cases := map[Severity]string{
+		SeverityNormal:   "normal",
+		SeverityWarning:  "warning",
+		SeverityCritical: "critical",
+	}
+	for sev, want := range cases {
+		if got := sev.String(); got != want {
+			t.Errorf("Severity(%d).String() = %q, want %q", sev, got, want)
+		}
+	}
+}
+
 func utilization(id MeterID, percent float64, active bool) *Utilization {
 	return &Utilization{MeterID: id, Percent: percent, IsActive: active, Level: SeverityNormal}
 }
@@ -143,6 +192,20 @@ func TestFetchErrorMessage(t *testing.T) {
 
 // fmtWrap buries the error one level deep, as a caller adding context would.
 func fmtWrap(err error) error { return errors.Join(errors.New("context"), err) }
+
+func TestFetchErrorKindStringKnownValues(t *testing.T) {
+	cases := map[FetchErrorKind]string{
+		Unauthorized: "unauthorized",
+		RateLimited:  "rate-limited",
+		Transient:    "transient",
+		Protocol:     "protocol",
+	}
+	for kind, want := range cases {
+		if got := kind.String(); got != want {
+			t.Errorf("FetchErrorKind(%d).String() = %q, want %q", kind, got, want)
+		}
+	}
+}
 
 func TestUnknownEnumsRenderSafely(t *testing.T) {
 	if got := Severity(0).String(); got != "unknown" {

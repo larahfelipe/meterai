@@ -37,6 +37,109 @@ func TestLoadCreatesDefaultsWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestDefaultPathUsesTheXDGConfigDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	got, err := DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath: %v", err)
+	}
+	if want := filepath.Join(dir, appDirName, fileName); got != want {
+		t.Errorf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultPathSurfacesAnUnresolvableConfigDirectory(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	if _, err := DefaultPath(); err == nil {
+		t.Fatal("DefaultPath must report an error when the OS config directory cannot be resolved")
+	}
+}
+
+func TestLoadSurfacesAGenericReadErrorWithoutOverwriting(t *testing.T) {
+	// A directory at the config path fails ReadFile with something other than
+	// ErrNotExist; Load must report it rather than treat it as "absent" and
+	// attempt to write defaults over it.
+	path := filepath.Join(t.TempDir(), fileName)
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("a directory at the config path must be a read error")
+	}
+}
+
+func TestLoadRejectsADocumentThatFailsValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), fileName)
+	if err := os.WriteFile(path, []byte(`{"warnAtPercent": 0}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "invalid config") {
+		t.Fatalf("Load = %v, want an error naming the invalid document", err)
+	}
+}
+
+func TestLoadSurfacesAWriteFailureWhenCreatingDefaults(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission checks")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	path := filepath.Join(dir, fileName)
+
+	cfg, err := Load(path)
+	if err == nil {
+		t.Fatal("an unwritable config directory must surface as an error, not a silent default")
+	}
+	if cfg != Default() {
+		t.Errorf("Load must still return usable defaults alongside the write error, got %+v", cfg)
+	}
+}
+
+func TestSaveFailsWhenTheParentPathIsAFile(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(blocker, fileName) // blocker is a file, not a directory
+	if err := Save(path, Default()); err == nil {
+		t.Fatal("Save must fail when the parent path is not a directory")
+	}
+}
+
+func TestSaveFailsWithoutLosingTheExistingDestinationOrLeakingATempFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, fileName)
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A non-empty directory at the destination makes the final rename fail;
+	// an empty one could be silently replaced on some platforms.
+	if err := os.WriteFile(filepath.Join(path, "x"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Save(path, Default()); err == nil {
+		t.Fatal("Save must fail rather than silently lose a directory at the target path")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != fileName {
+			t.Errorf("stray temp file left behind after a failed Save: %q", e.Name())
+		}
+	}
+}
+
 func TestSaveWritesHumanReadableDurations(t *testing.T) {
 	path := filepath.Join(t.TempDir(), fileName)
 	cfg := Default()

@@ -89,6 +89,32 @@ func TestParseRejects(t *testing.T) {
 	}
 }
 
+func TestSecretRedaction(t *testing.T) {
+	const token = "sk-ant-oat01-SHOULD-NOT-APPEAR"
+	s := Secret(token)
+
+	if got := s.String(); got != redactedPlaceholder {
+		t.Errorf("String() = %q, want %q", got, redactedPlaceholder)
+	}
+	if got := fmt.Sprintf("%#v", s); got != redactedPlaceholder {
+		t.Errorf("%%#v (GoString) = %q, want %q", got, redactedPlaceholder)
+	}
+	encoded, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded string
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("MarshalJSON produced invalid JSON %s: %v", encoded, err)
+	}
+	if decoded != redactedPlaceholder {
+		t.Errorf("MarshalJSON = %s, decodes to %q, want %q", encoded, decoded, redactedPlaceholder)
+	}
+	if got := s.Reveal(); got != token {
+		t.Errorf("Reveal() = %q, want the raw token", got)
+	}
+}
+
 func TestSecretNeverRenders(t *testing.T) {
 	const token = "sk-ant-oat01-LIVE-TOKEN"
 	c, err := Parse([]byte(`{"claudeAiOauth":{"accessToken":"`+token+`","expiresAt":1785022579691}}`), "test")
@@ -111,6 +137,36 @@ func TestSecretNeverRenders(t *testing.T) {
 		if strings.Contains(rendered, token) {
 			t.Fatalf("token leaked into %q", rendered)
 		}
+	}
+}
+
+func TestFailureKindStringAllValues(t *testing.T) {
+	cases := map[FailureKind]string{
+		Absent:          "absent",
+		Unreadable:      "unreadable",
+		Malformed:       "malformed",
+		Incomplete:      "incomplete",
+		Expired:         "expired",
+		FailureKind(0):  "unknown",
+		FailureKind(99): "unknown",
+	}
+	for kind, want := range cases {
+		if got := kind.String(); got != want {
+			t.Errorf("FailureKind(%d).String() = %q, want %q", kind, got, want)
+		}
+	}
+}
+
+func TestFailureErrorMessage(t *testing.T) {
+	cause := errors.New("permission denied")
+	f := &Failure{Kind: Unreadable, Path: "/tmp/creds.json", Err: cause}
+
+	want := `credential unreadable at "/tmp/creds.json": permission denied`
+	if got := f.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	if !errors.Is(f, cause) {
+		t.Error("Failure does not unwrap to its cause, breaking errors.Is chains")
 	}
 }
 

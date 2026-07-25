@@ -146,6 +146,16 @@ func TestStatusTextForUntypedError(t *testing.T) {
 	}
 }
 
+func TestHumanizeErrorDefaultsForAnUnrecognizedKind(t *testing.T) {
+	// A FetchErrorKind this build does not recognize (e.g. added by a newer
+	// vendor integration and not yet handled here) must still degrade to a
+	// generic message rather than an empty or misleading one.
+	err := &quota.FetchError{Kind: quota.FetchErrorKind(99), Err: errors.New("x")}
+	if got := humanizeError(err); got != "Falha ao consultar" {
+		t.Errorf("humanizeError(unrecognized kind) = %q, want the generic fallback", got)
+	}
+}
+
 func TestTooltipFitsThePlatformLimit(t *testing.T) {
 	tooltip := Tooltip(liveState(), now)
 	if lines := strings.Split(tooltip, "\n"); len(lines) != 3 {
@@ -198,6 +208,24 @@ func TestIconStateEscalatesOnLocalThreshold(t *testing.T) {
 	_, level, _ := IconState(state, cfg)
 	if level != quota.SeverityCritical {
 		t.Errorf("level = %v, want critical past the local threshold even though the vendor said normal", level)
+	}
+}
+
+func TestIconStateTracksABalancePrimary(t *testing.T) {
+	cfg := config.Default() // warn 75, critical 90
+	state := poll.State{Snapshot: &quota.Snapshot{Meters: []quota.Meter{
+		&quota.Balance{MeterID: "v:credits", Percent: 82, Level: quota.SeverityNormal},
+	}}}
+
+	percent, level, stale := IconState(state, cfg)
+	if percent != 82 {
+		t.Errorf("percent = %v, want the balance meter's 82", percent)
+	}
+	if level != quota.SeverityWarning {
+		t.Errorf("level = %v, want warning past the local 75%% threshold", level)
+	}
+	if stale {
+		t.Error("a healthy balance-only state must not render as stale")
 	}
 }
 

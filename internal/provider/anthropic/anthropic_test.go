@@ -140,6 +140,28 @@ func TestDecodeRejectsUnrecognizedDocument(t *testing.T) {
 	}
 }
 
+func TestLabelFallsBackToTheRawKindForAnUnknownWindow(t *testing.T) {
+	if got := label("weekly_future_thing"); got != "weekly_future_thing" {
+		t.Errorf("label(unrecognized) = %q, want the raw kind returned unchanged", got)
+	}
+}
+
+func TestParseSeverityMapsEveryVendorValue(t *testing.T) {
+	cases := map[string]quota.Severity{
+		"warning":                   quota.SeverityWarning,
+		"critical":                  quota.SeverityCritical,
+		"exceeded":                  quota.SeverityCritical,
+		"normal":                    quota.SeverityNormal,
+		"":                          quota.SeverityNormal,
+		"unrecognized-future-value": quota.SeverityNormal,
+	}
+	for input, want := range cases {
+		if got := parseSeverity(input); got != want {
+			t.Errorf("parseSeverity(%q) = %v, want %v", input, got, want)
+		}
+	}
+}
+
 func TestParseInstantToleratesGarbage(t *testing.T) {
 	for _, s := range []string{"", "not-a-date", "2026-13-45T99:99:99Z"} {
 		if got := parseInstant(s); !got.IsZero() {
@@ -196,6 +218,70 @@ func (r rewriteHost) RoundTrip(req *http.Request) (*http.Response, error) {
 		next = http.DefaultTransport
 	}
 	return next.RoundTrip(target.WithContext(req.Context()))
+}
+
+func TestVendorReturnsTheStableKey(t *testing.T) {
+	p := New(stubCredentials{}, nil)
+	if p.Vendor() != VendorKey {
+		t.Errorf("Vendor() = %q, want %q", p.Vendor(), VendorKey)
+	}
+}
+
+func TestNewAppliesABoundedTimeoutWhenNoClientIsGiven(t *testing.T) {
+	p := New(stubCredentials{}, nil)
+	if p.client == nil {
+		t.Fatal("New(nil) must build its own client rather than leave it nil")
+	}
+	if p.client.Timeout != requestTimeout {
+		t.Errorf("client.Timeout = %v, want %v", p.client.Timeout, requestTimeout)
+	}
+}
+
+func TestFetchSurfacesCredentialSourceFailureAsUnauthorized(t *testing.T) {
+	sourceErr := errors.New("no candidate path holds Claude CLI credentials")
+	p := newTestProvider(t, func(http.ResponseWriter, *http.Request) {
+		t.Error("a failed credential lookup must not reach the network")
+	}, stubCredentials{err: sourceErr})
+
+	_, err := p.Fetch(context.Background())
+	var fe *quota.FetchError
+	if !errors.As(err, &fe) || fe.Kind != quota.Unauthorized {
+		t.Fatalf("want Unauthorized, got %v", err)
+	}
+	if !errors.Is(err, sourceErr) {
+		t.Error("the underlying credential failure must remain reachable through errors.Is")
+	}
+}
+
+// failingTransport always fails at the transport level, regardless of the
+// request, to exercise Fetch's Transient classification of a network error.
+type failingTransport struct{ err error }
+
+func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+func TestFetchClassifiesATransportFailureAsTransient(t *testing.T) {
+	p := New(stubCredentials{creds: validCredentials()}, &http.Client{
+		Transport: failingTransport{err: errors.New("connection refused")},
+	})
+	p.now = func() time.Time { return observedAt }
+
+	_, err := p.Fetch(context.Background())
+	var fe *quota.FetchError
+	if !errors.As(err, &fe) || fe.Kind != quota.Transient {
+		t.Fatalf("want Transient, got %v", err)
+	}
+}
+
+func TestFetchRejectsAnOversizedResponseBody(t *testing.T) {
+	p := newTestProvider(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, maxResponseBytes+1))
+	}, stubCredentials{creds: validCredentials()})
+
+	_, err := p.Fetch(context.Background())
+	var fe *quota.FetchError
+	if !errors.As(err, &fe) || fe.Kind != quota.Protocol {
+		t.Fatalf("want Protocol, got %v", err)
+	}
 }
 
 func TestFetchSendsRequiredHeaders(t *testing.T) {

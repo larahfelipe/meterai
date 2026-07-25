@@ -1,4 +1,4 @@
-module meterAI
+module github.com/larahfelipe/meterai
 
 go 1.25.5
 

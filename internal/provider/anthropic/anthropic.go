@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"time"
 
-	"meterAI/internal/credential"
-	"meterAI/internal/quota"
+	"github.com/larahfelipe/meterai/internal/credential"
+	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 const (

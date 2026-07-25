@@ -14,12 +14,12 @@ import (
 	"os/signal"
 	"time"
 
-	"meterAI/internal/config"
-	"meterAI/internal/credential"
-	"meterAI/internal/poll"
-	"meterAI/internal/provider/anthropic"
-	"meterAI/internal/singleton"
-	"meterAI/internal/tray"
+	"github.com/larahfelipe/meterai/internal/config"
+	"github.com/larahfelipe/meterai/internal/credential"
+	"github.com/larahfelipe/meterai/internal/poll"
+	"github.com/larahfelipe/meterai/internal/provider/anthropic"
+	"github.com/larahfelipe/meterai/internal/singleton"
+	"github.com/larahfelipe/meterai/internal/tray"
 )
 
 // exitAlreadyRunning is distinct from a generic failure so a launcher or

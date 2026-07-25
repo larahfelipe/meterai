@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"meterAI/internal/poll"
-	"meterAI/internal/quota"
+	"github.com/larahfelipe/meterai/internal/poll"
+	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 const (

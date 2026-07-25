@@ -16,7 +16,7 @@ import (
 	"image/draw"
 	"math"
 
-	"meterAI/internal/quota"
+	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 const (

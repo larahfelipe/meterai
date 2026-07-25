@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"meterAI/internal/config"
+	"github.com/larahfelipe/meterai/internal/config"
 )
 
 // Run prints each state change to stderr instead of drawing a tray icon.

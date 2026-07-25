@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"meterAI/internal/config"
-	"meterAI/internal/poll"
-	"meterAI/internal/quota"
+	"github.com/larahfelipe/meterai/internal/config"
+	"github.com/larahfelipe/meterai/internal/poll"
+	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 // maxTooltipRunes is the Shell_NotifyIcon limit: NOTIFYICONDATA.szTip holds 128

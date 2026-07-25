@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"meterAI/internal/credential"
-	"meterAI/internal/quota"
+	"github.com/larahfelipe/meterai/internal/credential"
+	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 // liveShapedResponse reproduces the exact field set returned by

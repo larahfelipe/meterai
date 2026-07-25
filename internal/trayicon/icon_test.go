@@ -8,7 +8,7 @@ import (
 	"math"
 	"testing"
 
-	"meterAI/internal/quota"
+	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 // decodeICO parses back the container this package writes, so the tests assert

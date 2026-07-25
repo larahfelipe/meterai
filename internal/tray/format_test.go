@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"meterAI/internal/config"
-	"meterAI/internal/poll"
-	"meterAI/internal/quota"
+	"github.com/larahfelipe/meterai/internal/config"
+	"github.com/larahfelipe/meterai/internal/poll"
+	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 var now = time.Date(2026, 7, 25, 18, 0, 0, 0, time.UTC)

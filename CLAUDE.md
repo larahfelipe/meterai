@@ -1,6 +1,6 @@
 # meterAI
 
-Go 1.25.5, module `meterAI`. Ships as a single Windows tray binary; developed and tested on Linux/WSL.
+Go 1.25.5, module `github.com/larahfelipe/meterai`. Ships as a single Windows tray binary; developed and tested on Linux/WSL.
 [README.md](README.md) carries the full design rationale — read it before changing behaviour in
 `internal/credential`, `internal/poll`, or the provider contract.
 

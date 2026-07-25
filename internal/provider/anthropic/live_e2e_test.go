@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"meterAI/internal/credential"
-	"meterAI/internal/quota"
+	"github.com/larahfelipe/meterai/internal/credential"
+	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 // TestLiveEndToEnd exercises discovery -> cache -> live HTTPS -> normalized

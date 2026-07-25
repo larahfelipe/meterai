@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"meterAI/internal/quota"
+	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 // scriptedProvider returns a queued result per call; the final entry repeats

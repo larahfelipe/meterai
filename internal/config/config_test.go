@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"meterAI/internal/poll"
-	"meterAI/internal/quota"
+	"github.com/larahfelipe/meterai/internal/poll"
+	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 func TestLoadCreatesDefaultsWhenAbsent(t *testing.T) {

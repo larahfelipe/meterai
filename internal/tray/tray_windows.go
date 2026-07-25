@@ -9,8 +9,8 @@ import (
 
 	"fyne.io/systray"
 
-	"meterAI/internal/config"
-	"meterAI/internal/trayicon"
+	"github.com/larahfelipe/meterai/internal/config"
+	"github.com/larahfelipe/meterai/internal/trayicon"
 )
 
 const (

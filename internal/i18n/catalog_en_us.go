@@ -27,6 +27,7 @@ var enUS = &Catalog{
 		ErrorRateLimited:     "Request limit reached — waiting",
 		ErrorTransient:       "No response from the API — retrying",
 		ErrorProtocol:        "The API changed shape — the app needs an update",
+		ErrorUnrecognized:    "Polling failed",
 		ErrorUnexpected:      "Unexpected failure while polling",
 	},
 	// The keys are the MeterIDs the providers mint and persist; they are matched

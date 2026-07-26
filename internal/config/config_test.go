@@ -2,12 +2,14 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/larahfelipe/meterai/internal/i18n"
 	"github.com/larahfelipe/meterai/internal/poll"
 	"github.com/larahfelipe/meterai/internal/quota"
 )
@@ -292,5 +294,81 @@ func TestSaveIsAtomic(t *testing.T) {
 		if e.Name() != fileName {
 			t.Errorf("stray file left behind: %q", e.Name())
 		}
+	}
+}
+
+func TestDefaultLanguageIsTheDefaultCatalogue(t *testing.T) {
+	cfg := Default()
+	if cfg.Language != string(i18n.DefaultLang) {
+		t.Errorf("Language = %q, want %q", cfg.Language, i18n.DefaultLang)
+	}
+	if got := cfg.Catalog().Lang(); got != i18n.DefaultLang {
+		t.Errorf("Catalog().Lang() = %q, want %q", got, i18n.DefaultLang)
+	}
+}
+
+func TestValidateAcceptsEverySupportedLanguage(t *testing.T) {
+	for _, lang := range i18n.Available() {
+		cfg := Default()
+		cfg.Language = string(lang)
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() with language %q: %v", lang, err)
+		}
+		if got := cfg.Catalog().Lang(); got != lang {
+			t.Errorf("Catalog().Lang() = %q, want %q", got, lang)
+		}
+	}
+}
+
+func TestValidateAcceptsAnAbsentLanguage(t *testing.T) {
+	// A document written before the field existed carries no language, and must
+	// keep loading rather than becoming invalid on upgrade.
+	cfg := Default()
+	cfg.Language = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() with no language: %v", err)
+	}
+	if got := cfg.Catalog().Lang(); got != i18n.DefaultLang {
+		t.Errorf("Catalog().Lang() = %q, want the default %q", got, i18n.DefaultLang)
+	}
+}
+
+func TestValidateRejectsAnUnsupportedLanguage(t *testing.T) {
+	cfg := Default()
+	cfg.Language = "de-DE"
+	err := cfg.Validate()
+	if !errors.Is(err, i18n.ErrUnsupportedLang) {
+		t.Fatalf("Validate() error = %v, want ErrUnsupportedLang", err)
+	}
+	// The user edits this file by hand, so the message has to name the field and
+	// the accepted values.
+	if !strings.Contains(err.Error(), "language") || !strings.Contains(err.Error(), string(i18n.LangPtBR)) {
+		t.Errorf("Validate() error = %q, does not guide the fix", err)
+	}
+}
+
+func TestCatalogFallsBackWhenValidationWasSkipped(t *testing.T) {
+	// Catalog must never be the thing that stops the UI from drawing, even for a
+	// value Validate would have rejected.
+	cfg := Default()
+	cfg.Language = "klingon"
+	if got := cfg.Catalog().Lang(); got != i18n.DefaultLang {
+		t.Errorf("Catalog().Lang() = %q, want the default %q", got, i18n.DefaultLang)
+	}
+}
+
+func TestLoadPreservesAnExplicitLanguage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	want := Default()
+	want.Language = string(i18n.LangPtBR)
+	if err := Save(path, want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Language != want.Language {
+		t.Errorf("Language = %q, want %q", got.Language, want.Language)
 	}
 }

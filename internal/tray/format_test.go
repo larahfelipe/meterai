@@ -7,11 +7,25 @@ import (
 	"time"
 
 	"github.com/larahfelipe/meterai/internal/config"
+	"github.com/larahfelipe/meterai/internal/i18n"
 	"github.com/larahfelipe/meterai/internal/poll"
 	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 var now = time.Date(2026, 7, 25, 18, 0, 0, 0, time.UTC)
+
+// presenterFor builds a Presenter pinned to one language, so a rendering test
+// asserts the text of a catalogue it names rather than whatever the default
+// happens to be.
+func presenterFor(t *testing.T, lang i18n.Lang) *Presenter {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Language = string(lang)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config with language %q is invalid: %v", lang, err)
+	}
+	return NewPresenter(cfg)
+}
 
 // liveState reproduces the shape of a real Anthropic poll: an inactive 5-hour
 // session window plus the active weekly window, with the figures observed on
@@ -23,11 +37,11 @@ func liveState() poll.State {
 			Plan:   "pro",
 			Meters: []quota.Meter{
 				&quota.Utilization{
-					MeterID: "anthropic:session", Name: "Sessão (5h)", Percent: 23,
+					MeterID: "anthropic:session", Name: "session", Percent: 23,
 					Reset: now.Add(2*time.Hour + 54*time.Minute), Level: quota.SeverityNormal,
 				},
 				&quota.Utilization{
-					MeterID: "anthropic:weekly_all", Name: "Semanal", Percent: 74,
+					MeterID: "anthropic:weekly_all", Name: "weekly_all", Percent: 74,
 					Reset: now.Add(25*time.Hour + 44*time.Minute), Level: quota.SeverityNormal,
 					IsActive: true,
 				},
@@ -39,7 +53,7 @@ func liveState() poll.State {
 }
 
 func TestRowsRenderMetersInProviderOrder(t *testing.T) {
-	rows := Rows(liveState(), now)
+	rows := presenterFor(t, i18n.LangPtBR).Rows(liveState(), now)
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
@@ -51,8 +65,32 @@ func TestRowsRenderMetersInProviderOrder(t *testing.T) {
 	}
 }
 
+func TestRowsRenderInTheDefaultLanguage(t *testing.T) {
+	rows := presenterFor(t, i18n.LangEnUS).Rows(liveState(), now)
+	if rows[0].Label != "Session (5h)" || rows[0].Detail != "23% · resets in 2h54" {
+		t.Errorf("row 0 = %+v", rows[0])
+	}
+	if rows[1].Label != "Weekly" || rows[1].Detail != "74% · resets in 1d01h" {
+		t.Errorf("row 1 = %+v", rows[1])
+	}
+}
+
+// A window the vendor introduces after this release has no catalogue entry, and
+// must still reach the menu under the provider's own name.
+func TestRowsFallBackToTheProviderNameForAnUnknownMeter(t *testing.T) {
+	state := poll.State{Snapshot: &quota.Snapshot{Meters: []quota.Meter{
+		&quota.Utilization{MeterID: "anthropic:monthly_opus", Name: "monthly_opus", Percent: 12},
+	}}}
+	for _, lang := range i18n.Available() {
+		rows := presenterFor(t, lang).Rows(state, now)
+		if rows[0].Label != "monthly_opus" {
+			t.Errorf("%s: label = %q, want the raw kind", lang, rows[0].Label)
+		}
+	}
+}
+
 func TestRowsBeforeFirstPoll(t *testing.T) {
-	if rows := Rows(poll.State{}, now); rows != nil {
+	if rows := presenterFor(t, i18n.LangEnUS).Rows(poll.State{}, now); rows != nil {
 		t.Errorf("rows = %v, want nil before the first successful poll", rows)
 	}
 }
@@ -61,16 +99,16 @@ func TestRowsRenderMoneyMeters(t *testing.T) {
 	limit := quota.Money{AmountMinor: 5000, Currency: "USD", Exponent: 2}
 	state := poll.State{Snapshot: &quota.Snapshot{Meters: []quota.Meter{
 		&quota.Balance{
-			MeterID: "anthropic:spend", Name: "Créditos",
+			MeterID: "anthropic:spend", Name: "spend",
 			Used:  quota.Money{AmountMinor: 1234, Currency: "USD", Exponent: 2},
 			Limit: &limit, Percent: 24.68,
 		},
 		&quota.Balance{
-			MeterID: "openrouter:credits", Name: "Saldo",
+			MeterID: "openrouter:credits", Name: "credits",
 			Used: quota.Money{AmountMinor: 750, Currency: "USD", Exponent: 2},
 		},
 	}}}
-	rows := Rows(state, now)
+	rows := presenterFor(t, i18n.LangPtBR).Rows(state, now)
 	if rows[0].Detail != "12.34 USD de 50.00 USD" {
 		t.Errorf("capped balance = %q", rows[0].Detail)
 	}
@@ -81,6 +119,7 @@ func TestRowsRenderMoneyMeters(t *testing.T) {
 }
 
 func TestFormatCountdown(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangPtBR)
 	cases := map[time.Duration]string{
 		-time.Hour:                      "agora",
 		0:                               "agora",
@@ -95,24 +134,36 @@ func TestFormatCountdown(t *testing.T) {
 		7*24*time.Hour + 3*time.Hour:    "7d03h",
 	}
 	for d, want := range cases {
-		if got := formatCountdown(d); got != want {
-			t.Errorf("formatCountdown(%v) = %q, want %q", d, got, want)
+		if got := presenter.countdown(d); got != want {
+			t.Errorf("countdown(%v) = %q, want %q", d, got, want)
 		}
 	}
 }
 
 func TestStatusTextByHealth(t *testing.T) {
-	healthy := StatusText(liveState(), now)
+	presenter := presenterFor(t, i18n.LangPtBR)
+	healthy := presenter.StatusText(liveState(), now)
 	if healthy != "Atualizado há 1min · próxima em 3min" {
 		t.Errorf("healthy status = %q", healthy)
 	}
 
-	if got := StatusText(poll.State{}, now); got != "Consultando…" {
+	if got := presenter.StatusText(poll.State{}, now); got != "Consultando…" {
 		t.Errorf("startup status = %q", got)
 	}
 }
 
+func TestStatusTextInTheDefaultLanguage(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangEnUS)
+	if got, want := presenter.StatusText(liveState(), now), "Updated 1m ago · next in 3m"; got != want {
+		t.Errorf("healthy status = %q, want %q", got, want)
+	}
+	if got, want := presenter.StatusText(poll.State{}, now), "Polling…"; got != want {
+		t.Errorf("startup status = %q, want %q", got, want)
+	}
+}
+
 func TestStatusTextNamesTheUserAction(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangPtBR)
 	cases := map[quota.FetchErrorKind]string{
 		quota.Unauthorized: "rode `claude`",
 		quota.RateLimited:  "aguardando",
@@ -122,7 +173,7 @@ func TestStatusTextNamesTheUserAction(t *testing.T) {
 	for kind, want := range cases {
 		state := liveState()
 		state.LastError = &quota.FetchError{Kind: kind, Err: errors.New("x")}
-		got := StatusText(state, now)
+		got := presenter.StatusText(state, now)
 		if !strings.Contains(got, want) {
 			t.Errorf("status for %v = %q, does not mention %q", kind, got, want)
 		}
@@ -135,8 +186,9 @@ func TestStatusTextNamesTheUserAction(t *testing.T) {
 }
 
 func TestStatusTextForUntypedError(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangPtBR)
 	state := poll.State{LastError: errors.New("boom")}
-	got := StatusText(state, now)
+	got := presenter.StatusText(state, now)
 	if !strings.Contains(got, "Falha inesperada") {
 		t.Errorf("status = %q", got)
 	}
@@ -151,13 +203,14 @@ func TestHumanizeErrorDefaultsForAnUnrecognizedKind(t *testing.T) {
 	// vendor integration and not yet handled here) must still degrade to a
 	// generic message rather than an empty or misleading one.
 	err := &quota.FetchError{Kind: quota.FetchErrorKind(99), Err: errors.New("x")}
-	if got := humanizeError(err); got != "Falha ao consultar" {
+	if got := presenterFor(t, i18n.LangPtBR).humanizeError(err); got != "Falha ao consultar" {
 		t.Errorf("humanizeError(unrecognized kind) = %q, want the generic fallback", got)
 	}
 }
 
 func TestTooltipFitsThePlatformLimit(t *testing.T) {
-	tooltip := Tooltip(liveState(), now)
+	presenter := presenterFor(t, i18n.LangPtBR)
+	tooltip := presenter.Tooltip(liveState(), now)
 	if lines := strings.Split(tooltip, "\n"); len(lines) != 3 {
 		t.Errorf("tooltip = %q, want two meter lines plus a status line", tooltip)
 	}
@@ -170,10 +223,10 @@ func TestTooltipFitsThePlatformLimit(t *testing.T) {
 	crowded := liveState()
 	for i := 0; i < 20; i++ {
 		crowded.Snapshot.Meters = append(crowded.Snapshot.Meters, &quota.Utilization{
-			Name: "Janela adicional de nome muito comprido", Percent: 50, Reset: now.Add(time.Hour),
+			Name: "an extra window with a deliberately long name", Percent: 50, Reset: now.Add(time.Hour),
 		})
 	}
-	long := Tooltip(crowded, now)
+	long := presenter.Tooltip(crowded, now)
 	if runes := []rune(long); len(runes) > maxTooltipRunes {
 		t.Errorf("tooltip is %d runes, over the %d limit", len(runes), maxTooltipRunes)
 	}
@@ -185,9 +238,30 @@ func TestTooltipFitsThePlatformLimit(t *testing.T) {
 	}
 }
 
+// The tooltip limit is a platform constant, not a per-language one: a
+// translation with longer words must still fit rather than be dropped by the
+// shell.
+func TestTooltipFitsThePlatformLimitInEveryLanguage(t *testing.T) {
+	crowded := liveState()
+	for i := 0; i < 20; i++ {
+		crowded.Snapshot.Meters = append(crowded.Snapshot.Meters, &quota.Utilization{
+			MeterID: "anthropic:weekly_opus", Name: "weekly_opus", Percent: 50, Reset: now.Add(time.Hour),
+		})
+	}
+	for _, lang := range i18n.Available() {
+		tooltip := presenterFor(t, lang).Tooltip(crowded, now)
+		if runes := []rune(tooltip); len(runes) > maxTooltipRunes {
+			t.Errorf("%s: tooltip is %d runes, over the %d limit", lang, len(runes), maxTooltipRunes)
+		}
+		if !strings.HasSuffix(tooltip, ellipsis) {
+			t.Errorf("%s: a truncated tooltip must be marked: %q", lang, tooltip)
+		}
+	}
+}
+
 func TestIconStateTracksTheActiveWindow(t *testing.T) {
 	cfg := config.Default() // warn 75, critical 90
-	percent, level, stale := IconState(liveState(), cfg)
+	percent, level, stale := NewPresenter(cfg).IconState(liveState())
 	// The weekly window is the active one, even though it is not first.
 	if percent != 74 {
 		t.Errorf("percent = %v, want the active window's 74", percent)
@@ -205,7 +279,7 @@ func TestIconStateEscalatesOnLocalThreshold(t *testing.T) {
 	state := liveState()
 	state.Snapshot.Meters[1].(*quota.Utilization).Percent = 91
 
-	_, level, _ := IconState(state, cfg)
+	_, level, _ := NewPresenter(cfg).IconState(state)
 	if level != quota.SeverityCritical {
 		t.Errorf("level = %v, want critical past the local threshold even though the vendor said normal", level)
 	}
@@ -217,7 +291,7 @@ func TestIconStateTracksABalancePrimary(t *testing.T) {
 		&quota.Balance{MeterID: "v:credits", Percent: 82, Level: quota.SeverityNormal},
 	}}}
 
-	percent, level, stale := IconState(state, cfg)
+	percent, level, stale := NewPresenter(cfg).IconState(state)
 	if percent != 82 {
 		t.Errorf("percent = %v, want the balance meter's 82", percent)
 	}
@@ -230,7 +304,7 @@ func TestIconStateTracksABalancePrimary(t *testing.T) {
 }
 
 func TestIconStateBeforeFirstPoll(t *testing.T) {
-	percent, level, stale := IconState(poll.State{}, config.Default())
+	percent, level, stale := NewPresenter(config.Default()).IconState(poll.State{})
 	if percent != 0 || level != quota.SeverityNormal || !stale {
 		t.Errorf("startup icon = (%v,%v,%v), want an empty greyed gauge", percent, level, stale)
 	}
@@ -238,7 +312,7 @@ func TestIconStateBeforeFirstPoll(t *testing.T) {
 
 func TestIconStateWithAnEmptySnapshot(t *testing.T) {
 	state := poll.State{Snapshot: &quota.Snapshot{Vendor: "anthropic"}}
-	if _, _, stale := IconState(state, config.Default()); !stale {
+	if _, _, stale := NewPresenter(config.Default()).IconState(state); !stale {
 		t.Error("a snapshot carrying no meters must render as stale, not as 0% healthy")
 	}
 }
@@ -246,7 +320,7 @@ func TestIconStateWithAnEmptySnapshot(t *testing.T) {
 func TestIconStateMarksStaleOnFailure(t *testing.T) {
 	state := liveState()
 	state.LastError = &quota.FetchError{Kind: quota.Transient, Err: errors.New("offline")}
-	if _, _, stale := IconState(state, config.Default()); !stale {
+	if _, _, stale := NewPresenter(config.Default()).IconState(state); !stale {
 		t.Error("a failed poll must grey the icon")
 	}
 }

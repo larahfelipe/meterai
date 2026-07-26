@@ -89,6 +89,7 @@ const (
 	ErrorRateLimited
 	ErrorTransient
 	ErrorProtocol
+	ErrorUnrecognized
 	ErrorUnexpected
 
 	// keyCount is one past the last valid Key. It bounds the name table and
@@ -116,6 +117,7 @@ var keyNames = [keyCount]string{
 	ErrorRateLimited:     "ErrorRateLimited",
 	ErrorTransient:       "ErrorTransient",
 	ErrorProtocol:        "ErrorProtocol",
+	ErrorUnrecognized:    "ErrorUnrecognized",
 	ErrorUnexpected:      "ErrorUnexpected",
 }
 

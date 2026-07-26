@@ -78,7 +78,8 @@ func TestDecodeLiveShape(t *testing.T) {
 	if primary.ID() != "anthropic:weekly_all" {
 		t.Errorf("Primary = %q, want anthropic:weekly_all", primary.ID())
 	}
-	if primary.Label() != "Semanal" {
+	// The provider reports the vendor's own kind; translation happens above it.
+	if primary.Label() != "weekly_all" {
 		t.Errorf("Label = %q", primary.Label())
 	}
 }
@@ -140,9 +141,19 @@ func TestDecodeRejectsUnrecognizedDocument(t *testing.T) {
 	}
 }
 
-func TestLabelFallsBackToTheRawKindForAnUnknownWindow(t *testing.T) {
-	if got := label("weekly_future_thing"); got != "weekly_future_thing" {
-		t.Errorf("label(unrecognized) = %q, want the raw kind returned unchanged", got)
+func TestDecodeSurfacesAnUnknownWindowUnderItsRawKind(t *testing.T) {
+	const unknownKind = `{"limits":[{"kind":"weekly_future_thing","percent":11,"severity":"normal"}]}`
+	snap, err := decode([]byte(unknownKind), "pro", observedAt)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// A window introduced after this release must reach the UI, which resolves
+	// its display name from the MeterID and falls back to this one.
+	if got := snap.Meters[0].Label(); got != "weekly_future_thing" {
+		t.Errorf("Label = %q, want the raw kind returned unchanged", got)
+	}
+	if got := snap.Meters[0].ID(); got != "anthropic:weekly_future_thing" {
+		t.Errorf("MeterID = %q", got)
 	}
 }
 

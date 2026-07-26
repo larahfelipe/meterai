@@ -176,22 +176,10 @@ type spendBlock struct {
 	Enabled  bool     `json:"enabled"`
 }
 
-// windowLabels translates vendor kinds for display. An unknown kind falls
-// through to the raw kind string, so a newly introduced window is still shown
-// rather than silently dropped.
-var windowLabels = map[string]string{
-	"session":       "Sessão (5h)",
-	"weekly_all":    "Semanal",
-	"weekly_opus":   "Semanal (Opus)",
-	"weekly_sonnet": "Semanal (Sonnet)",
-	"weekly_cowork": "Semanal (Cowork)",
-}
-
 const (
 	legacyFiveHourKind = "session"
 	legacySevenDayKind = "weekly_all"
 	spendMeterKind     = "spend"
-	spendMeterLabel    = "Créditos"
 )
 
 func decode(raw []byte, plan string, observedAt time.Time) (*quota.Snapshot, error) {
@@ -226,7 +214,7 @@ func normalizedWindows(entries []limitEntry) []quota.Meter {
 		}
 		meters = append(meters, &quota.Utilization{
 			MeterID:  meterID(entry.Kind),
-			Name:     label(entry.Kind),
+			Name:     entry.Kind,
 			Percent:  *entry.Percent,
 			Reset:    parseInstant(entry.ResetsAt),
 			Level:    parseSeverity(entry.Severity),
@@ -253,7 +241,7 @@ func legacyWindows(fiveHour, sevenDay *legacyWindow) []quota.Meter {
 		}
 		meters = append(meters, &quota.Utilization{
 			MeterID: meterID(w.kind),
-			Name:    label(w.kind),
+			Name:    w.kind,
 			Percent: *w.window.Utilization,
 			Reset:   parseInstant(w.window.ResetsAt),
 			Level:   quota.SeverityNormal,
@@ -270,7 +258,7 @@ func spendBalance(s *spendBlock) *quota.Balance {
 	}
 	balance := &quota.Balance{
 		MeterID: meterID(spendMeterKind),
-		Name:    spendMeterLabel,
+		Name:    spendMeterKind,
 		Used:    quota.Money{AmountMinor: s.Used.AmountMinor, Currency: s.Used.Currency, Exponent: s.Used.Exponent},
 		Level:   parseSeverity(s.Severity),
 	}
@@ -284,13 +272,6 @@ func spendBalance(s *spendBlock) *quota.Balance {
 }
 
 func meterID(kind string) quota.MeterID { return quota.MeterID(VendorKey + ":" + kind) }
-
-func label(kind string) string {
-	if l, ok := windowLabels[kind]; ok {
-		return l
-	}
-	return kind
-}
 
 func parseSeverity(s string) quota.Severity {
 	switch s {

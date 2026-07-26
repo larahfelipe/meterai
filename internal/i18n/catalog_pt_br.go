@@ -24,6 +24,7 @@ var ptBR = &Catalog{
 		ErrorRateLimited:     "Limite de requisições atingido — aguardando",
 		ErrorTransient:       "Sem resposta da API — tentando novamente",
 		ErrorProtocol:        "A API mudou de formato — o app precisa ser atualizado",
+		ErrorUnrecognized:    "Falha ao consultar",
 		ErrorUnexpected:      "Falha inesperada ao consultar",
 	},
 	meterLabels: map[quota.MeterID]string{

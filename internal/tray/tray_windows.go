@@ -10,11 +10,13 @@ import (
 	"fyne.io/systray"
 
 	"github.com/larahfelipe/meterai/internal/config"
+	"github.com/larahfelipe/meterai/internal/i18n"
 	"github.com/larahfelipe/meterai/internal/trayicon"
 )
 
 const (
-	// appTitle is the accessible name Windows announces for the icon.
+	// appTitle is the accessible name Windows announces for the icon. It is the
+	// product name and therefore not translated.
 	appTitle = "meterAI"
 
 	// maxMeterRows bounds the pre-allocated menu entries. systray can add items
@@ -23,16 +25,18 @@ const (
 	// maxMeterRows, which is why provider order is significant.
 	maxMeterRows = 6
 
-	// refreshRejectedNotice replaces the status line when the user asks for a
-	// refresh inside the floor, so the click is visibly acknowledged rather
-	// than appearing to do nothing.
-	refreshRejectedNotice = "Consulta recente demais — aguarde um instante"
+	// rowLabelDetailGap separates a meter's name from its figures in a menu row.
+	// Three spaces is what reads as a column break in the shell's menu font.
+	rowLabelDetailGap = "   "
 )
 
 // Run displays the tray icon and blocks until the user quits or ctx is
 // cancelled. It must be called from the main goroutine: systray locks the OS
 // thread that owns the Windows message loop.
 func Run(ctx context.Context, cfg config.Config, updates <-chan struct{}, controller Controller) error {
+	// The exit callback is empty on purpose: systray removes the icon itself, and
+	// the poller and the single-instance guard are unwound by the caller once
+	// this returns.
 	systray.Run(func() { onReady(ctx, cfg, updates, controller) }, func() {})
 	return nil
 }
@@ -40,7 +44,7 @@ func Run(ctx context.Context, cfg config.Config, updates <-chan struct{}, contro
 func onReady(ctx context.Context, cfg config.Config, updates <-chan struct{}, controller Controller) {
 	systray.SetTitle(appTitle)
 
-	view := &menuView{cfg: cfg}
+	view := &menuView{presenter: NewPresenter(cfg)}
 	view.rows = make([]*systray.MenuItem, maxMeterRows)
 	for i := range view.rows {
 		item := systray.AddMenuItem("", "")
@@ -53,9 +57,10 @@ func onReady(ctx context.Context, cfg config.Config, updates <-chan struct{}, co
 	view.status = systray.AddMenuItem("", "")
 	view.status.Disable()
 
-	refreshItem := systray.AddMenuItem("Atualizar agora", "Força uma consulta imediata")
+	catalog := view.presenter.catalog
+	refreshItem := systray.AddMenuItem(catalog.Text(i18n.MenuRefresh), catalog.Text(i18n.MenuRefreshTooltip))
 	systray.AddSeparator()
-	quitItem := systray.AddMenuItem("Sair", "Encerra o monitor")
+	quitItem := systray.AddMenuItem(catalog.Text(i18n.MenuQuit), catalog.Text(i18n.MenuQuitTooltip))
 
 	view.apply(controller.State(), time.Now())
 
@@ -70,7 +75,9 @@ func onReady(ctx context.Context, cfg config.Config, updates <-chan struct{}, co
 				return
 			case <-refreshItem.ClickedCh:
 				if !controller.Refresh() {
-					view.status.SetTitle(refreshRejectedNotice)
+					// Replacing the status line acknowledges the click, which
+					// would otherwise look like nothing happened.
+					view.status.SetTitle(catalog.Text(i18n.RefreshRejected))
 				}
 			case <-updates:
 				view.apply(controller.State(), time.Now())
@@ -82,30 +89,30 @@ func onReady(ctx context.Context, cfg config.Config, updates <-chan struct{}, co
 // menuView owns the mutable tray widgets. Every method runs on the single
 // goroutine started in onReady, so the fields need no synchronization.
 type menuView struct {
-	cfg    config.Config
-	rows   []*systray.MenuItem
-	status *systray.MenuItem
+	presenter *Presenter
+	rows      []*systray.MenuItem
+	status    *systray.MenuItem
 	// lastIcon suppresses redundant SetIcon calls: the gauge quantizes to whole
 	// rows, so most polls render identical bytes.
 	lastIcon []byte
 }
 
 func (v *menuView) apply(state PollState, now time.Time) {
-	percent, level, stale := IconState(state, v.cfg)
+	percent, level, stale := v.presenter.IconState(state)
 	if icon := trayicon.Render(percent, level, stale); !bytes.Equal(icon, v.lastIcon) {
 		systray.SetIcon(icon)
 		v.lastIcon = icon
 	}
-	systray.SetTooltip(Tooltip(state, now))
+	systray.SetTooltip(v.presenter.Tooltip(state, now))
 
-	rows := Rows(state, now)
+	rows := v.presenter.Rows(state, now)
 	for i, item := range v.rows {
 		if i >= len(rows) {
 			item.Hide()
 			continue
 		}
-		item.SetTitle(rows[i].Label + "   " + rows[i].Detail)
+		item.SetTitle(rows[i].Label + rowLabelDetailGap + rows[i].Detail)
 		item.Show()
 	}
-	v.status.SetTitle(StatusText(state, now))
+	v.status.SetTitle(v.presenter.StatusText(state, now))
 }

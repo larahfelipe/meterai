@@ -45,6 +45,9 @@ func (s Severity) String() string {
 // so no consumer can encounter an unhandled meter shape.
 type Meter interface {
 	ID() MeterID
+	// Label is the vendor's own name for the meter, normally the raw kind string
+	// it reports. Presentation layers translate by MeterID and fall back to this,
+	// so a window a vendor introduces after a release still reaches the UI.
 	Label() string
 	Severity() Severity
 	// ResetsAt is zero when the vendor exposes no reset instant, as with a

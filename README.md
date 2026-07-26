@@ -161,7 +161,8 @@ A JSON file, created on first run with owner-only permissions:
   "credentialPath": "",
   "pollInterval": "5m0s",
   "warnAtPercent": 75,
-  "criticalAtPercent": 90
+  "criticalAtPercent": 90,
+  "language": "en-US"
 }
 ```
 
@@ -171,6 +172,7 @@ A JSON file, created on first run with owner-only permissions:
 | `pollInterval` | Polling cadence. Values below the safe minimum are rejected with a message, not silently corrected. |
 | `warnAtPercent` | Local warning threshold. |
 | `criticalAtPercent` | Local critical threshold. Must be greater than or equal to `warnAtPercent`. |
+| `language` | Interface language: `en-US` (default) or `pt-BR`. Empty selects the default; an unsupported tag is rejected with the list of accepted ones. |
 
 A populated `credentialPath` is **authoritative**: if that path fails, the app
 reports an error rather than looking elsewhere. Falling through to another
@@ -252,6 +254,7 @@ internal/credential/    location, parsing and caching of the credential file
 internal/provider/      quota.Provider implementations, one per vendor
 internal/poll/          scheduling and backoff
 internal/config/        user settings
+internal/i18n/          every user-visible string, one catalogue per language
 internal/tray/          pure formatting (format.go) + platform glue
 internal/trayicon/      icon rendering in ICO format
 ```
@@ -283,7 +286,12 @@ The contract an implementation must honour:
 
 - Every returned failure is a `*quota.FetchError` with the correct kind — that
   is what drives retry behaviour and the user-facing message.
-- `MeterID` uses the vendor prefix and stable values.
+- `MeterID` uses the vendor prefix and stable values. It is also the key a
+  translation is looked up under, so renaming one silently drops the meter back
+  to its untranslated name.
+- A meter's `Label()` is the vendor's own kind string, not display text.
+  `internal/i18n` translates by `MeterID` and falls back to that raw kind, which
+  is what lets a window a vendor adds tomorrow appear without a code change.
 - No field of the remote response is mandatory. Undocumented endpoints change
   shape without notice, so an unrecognizable document becomes `Protocol`, never
   a panic or a zero value passing as valid.

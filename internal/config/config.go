@@ -1,7 +1,7 @@
 // Package config holds the user-editable settings. The format is JSON in the
 // OS config directory: it needs no third-party parser, and the file is small
 // enough that JSON's lack of comments costs less than a dependency whose
-// version has to be tracked for a five-field document.
+// version has to be tracked for a document this small.
 package config
 
 import (
@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/larahfelipe/meterai/internal/i18n"
 	"github.com/larahfelipe/meterai/internal/poll"
 	"github.com/larahfelipe/meterai/internal/quota"
 )
@@ -74,6 +75,10 @@ type Config struct {
 	// WarnAtPercent and CriticalAtPercent escalate the tray icon locally.
 	WarnAtPercent     float64 `json:"warnAtPercent"`
 	CriticalAtPercent float64 `json:"criticalAtPercent"`
+	// Language is a BCP 47 tag with a catalogue in internal/i18n. Empty means
+	// the default catalogue, so a document written before this field existed
+	// keeps working.
+	Language string `json:"language"`
 }
 
 // Default returns the settings used when no file exists yet.
@@ -82,7 +87,20 @@ func Default() Config {
 		PollInterval:      Duration(poll.DefaultInterval),
 		WarnAtPercent:     defaultWarnPercent,
 		CriticalAtPercent: defaultCriticalPercent,
+		Language:          string(i18n.DefaultLang),
 	}
+}
+
+// Catalog resolves the language into the catalogue the UI renders from. Validate
+// is what rejects an unsupported tag; here an unresolvable value degrades to the
+// default catalogue, because a language nobody can read is still better than a
+// UI that refuses to draw.
+func (c Config) Catalog() *i18n.Catalog {
+	lang, err := i18n.Parse(c.Language)
+	if err != nil {
+		lang = i18n.DefaultLang
+	}
+	return i18n.For(lang)
 }
 
 // SeverityFor combines the vendor's own assessment with the local thresholds,
@@ -118,6 +136,9 @@ func (c Config) Validate() error {
 	if c.CriticalAtPercent < c.WarnAtPercent {
 		return fmt.Errorf("criticalAtPercent (%v) is below warnAtPercent (%v); the critical threshold would be unreachable",
 			c.CriticalAtPercent, c.WarnAtPercent)
+	}
+	if _, err := i18n.Parse(c.Language); err != nil {
+		return fmt.Errorf("language is invalid: %w", err)
 	}
 	return nil
 }

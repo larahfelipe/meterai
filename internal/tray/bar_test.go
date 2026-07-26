@@ -128,7 +128,7 @@ func TestMenuRowTitleOmitsFieldsTheMeterLacks(t *testing.T) {
 	}{
 		"complete row": {
 			Row{Label: "Session (5h)", Bar: "██░░░░░░░░", Detail: "23% · resets in 2h54"},
-			"Session (5h)   ██░░░░░░░░   23% · resets in 2h54",
+			"Session (5h)   23% · resets in 2h54\t██░░░░░░░░",
 		},
 		"no gauge": {
 			Row{Label: "Credits", Detail: "7.50 USD"},
@@ -136,7 +136,7 @@ func TestMenuRowTitleOmitsFieldsTheMeterLacks(t *testing.T) {
 		},
 		"no figures": {
 			Row{Label: "Weekly", Bar: "███████░░░"},
-			"Weekly   ███████░░░",
+			"Weekly\t███████░░░",
 		},
 		"label only": {
 			Row{Label: "Weekly"},
@@ -149,5 +149,43 @@ func TestMenuRowTitleOmitsFieldsTheMeterLacks(t *testing.T) {
 				t.Errorf("MenuRowTitle(%+v) = %q, want %q", tc.row, got, tc.want)
 			}
 		})
+	}
+}
+
+// Labels differ in length, so spaces cannot line the gauges up in a proportional
+// menu font. The tab is what Windows treats as a column break: everything after it
+// is drawn flush right, which puts every gauge in the same column.
+func TestMenuRowTitlePushesTheGaugeToOneColumn(t *testing.T) {
+	rows := presenterFor(t, i18n.LangPtBR).Rows(liveState(), now)
+	if len(rows) < 2 {
+		t.Fatalf("rows = %d, want at least two meters", len(rows))
+	}
+	for _, row := range rows {
+		title := MenuRowTitle(row)
+		if strings.Count(title, menuRightAlign) != 1 {
+			t.Errorf("title %q must carry exactly one column break", title)
+		}
+		left, right, _ := strings.Cut(title, menuRightAlign)
+		if right != row.Bar {
+			t.Errorf("field after the column break = %q, want the gauge %q", right, row.Bar)
+		}
+		// The label and the figures stay on the left of the break, in reading order.
+		if !strings.HasPrefix(left, row.Label) || !strings.HasSuffix(left, row.Detail) {
+			t.Errorf("left of the break = %q, want %q then %q", left, row.Label, row.Detail)
+		}
+	}
+}
+
+func TestMenuRowTitleHasNoColumnBreakWithoutAGauge(t *testing.T) {
+	// A row with nothing to right-align must not open an empty column, which would
+	// widen every other row in the menu.
+	for _, row := range []Row{
+		{Label: "E-mail", Detail: "sample@example.com"},
+		{Label: "Credits", Detail: "7.50 USD"},
+		{Label: "Weekly"},
+	} {
+		if title := MenuRowTitle(row); strings.Contains(title, menuRightAlign) {
+			t.Errorf("MenuRowTitle(%+v) = %q, want no column break", row, title)
+		}
 	}
 }

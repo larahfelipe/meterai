@@ -100,6 +100,7 @@ const (
 	IntervalMinutes
 	IntervalHours
 	SettingsSaveFailed
+	AccountName
 	AccountEmail
 	AccountOrganization
 	MenuQuit
@@ -141,6 +142,7 @@ var keyNames = [keyCount]string{
 	IntervalMinutes:      "IntervalMinutes",
 	IntervalHours:        "IntervalHours",
 	SettingsSaveFailed:   "SettingsSaveFailed",
+	AccountName:          "AccountName",
 	AccountEmail:         "AccountEmail",
 	AccountOrganization:  "AccountOrganization",
 	MenuQuit:             "MenuQuit",

@@ -47,6 +47,11 @@ Vendor-specific knowledge stops inside `internal/provider/<vendor>/`. Never name
 `internal/tray/format.go` and `internal/trayicon` are pure and fully testable; the `_windows.go` and
 `_other.go` files are platform glue and are not.
 
+**Menu row layout is a tab, not padding.** `tray.MenuRowTitle` puts the gauge after `\t`, which
+Windows menus draw flush right; spaces cannot align a column in a proportional font. systray sets
+items as `MFT_STRING` (no owner-draw), which is what makes the shell's own tab handling apply. A row
+with no gauge carries no tab, because an empty right column widens every other row.
+
 ## Invariants that span files
 
 **Never write to the credential file.** No OAuth flow, no refresh, no rewrite. Anthropic's
@@ -82,7 +87,9 @@ show a state that is not on disk. A new cadence governs the delay computed after
 timer already waiting is never cut short.
 
 **`quota.MeterID` (`<vendor>:<kind>`) and `anthropic.VendorKey` are persisted keys** — stable across
-releases even if the vendor renames its own field.
+releases even if the vendor renames its own field. `Snapshot.Product` is the opposite: display text
+the provider owns ("Claude"), free to change, never a key. Product branding belongs in the provider
+package, not in `internal/i18n`, because it is vendor knowledge and is identical in every language.
 
 **Meter order in a `Snapshot` is load-bearing.** It sets menu row order and decides which meters
 survive tooltip truncation at 127 runes and the fixed `maxMeterRows = 6` menu slots. Never sort it,

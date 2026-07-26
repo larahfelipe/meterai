@@ -21,7 +21,7 @@ func TestRenderWritesEveryMeterAndTheStatusLine(t *testing.T) {
 	render(&out, presenterFor(t, i18n.LangEnUS), liveState(), nil, now)
 
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	// A blank line, the timestamp banner, the plan header, one line per meter,
+	// A blank line, the timestamp banner, the provider header, one line per meter,
 	// then the status line.
 	if len(lines) != 6 {
 		t.Fatalf("output has %d lines, want 6:\n%s", len(lines), out.String())
@@ -42,7 +42,7 @@ func TestRenderWritesTheAccountItIsGiven(t *testing.T) {
 	account := &identity.Account{DisplayName: "Sample", Email: "sample@example.com", Organization: "Sample Org"}
 	render(&out, presenterFor(t, i18n.LangEnUS), liveState(), account, now)
 
-	for _, want := range []string{"Sample · Pro", "sample@example.com", "Sample Org"} {
+	for _, want := range []string{"Claude Pro", "Sample", "sample@example.com", "Sample Org"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output does not carry %q:\n%s", want, out.String())
 		}
@@ -93,7 +93,7 @@ func TestRunRendersOnceAndUnwindsWithTheContext(t *testing.T) {
 	}
 	// The first reading is printed before the loop, so a cancelled context still
 	// produces output rather than exiting silently.
-	if !strings.Contains(out.String(), "Sample · Pro") {
+	if !strings.Contains(out.String(), "Claude Pro") {
 		t.Errorf("output = %q", out.String())
 	}
 }

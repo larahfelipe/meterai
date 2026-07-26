@@ -137,11 +137,19 @@ Run `dist\meterAI.exe`. The icon appears in the notification area.
 - **Hovering** shows each quota window, its percentage, and the time to reset.
   The tooltip carries no gauges: the shell caps it at 127 characters, and ten
   cells per meter would push the status line out of it.
-- **Clicking** opens a menu headed by the account and plan being monitored, then
-  a gauge per meter, a *Details* submenu carrying the account's e-mail and
-  organization, a *Settings* submenu, and finally *Refresh now* and *Quit*. A
-  meter with no stated allowance, such as an uncapped balance, shows no gauge
-  rather than an empty one.
+- **Clicking** opens a menu headed by the product and plan being monitored
+  ("Claude Max"), then
+  one row per meter, a *Details* submenu carrying the account name, e-mail and
+  organization, a *Settings* submenu, and finally *Refresh now* and *Quit*. The
+  header answers which service and which allowance; who the account belongs to is
+  one level down.
+- Each meter row puts its label and figures on the left and its **gauge flush
+  against the right edge**, so the gauges line up in one column even though the
+  labels differ in length. That column break is a tab character, which Windows
+  menus draw right-aligned; padding with spaces cannot align anything, because the
+  menu font is proportional. A meter with no stated allowance, such as an uncapped
+  balance, shows no gauge rather than an empty one — and no column break either,
+  since an empty one would widen every other row.
 - **Settings** changes the update cadence and the interface language without a
   restart. Each change is written to the config file first and only then applied,
   so the menu never shows a setting that is not on disk; if the write fails, the
@@ -339,6 +347,9 @@ The contract an implementation must honour:
 - `MeterID` uses the vendor prefix and stable values. It is also the key a
   translation is looked up under, so renaming one silently drops the meter back
   to its untranslated name.
+- `Snapshot.Product` is what the vendor sells ("Claude"), as opposed to `Vendor`,
+  which is the stable key ("anthropic"). It heads the menu, so a provider that
+  states none is displayed under its key instead.
 - A meter's `Label()` is the vendor's own kind string, not display text.
   `internal/i18n` translates by `MeterID` and falls back to that raw kind, which
   is what lets a window a vendor adds tomorrow appear without a code change.

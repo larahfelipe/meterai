@@ -22,6 +22,11 @@ const (
 	// VendorKey namespaces this provider's MeterIDs and must stay stable.
 	VendorKey = "anthropic"
 
+	// productName is what the subscription is sold as. It is not derived from
+	// VendorKey: the company and the product have different names, and only the
+	// key has to stay stable across releases.
+	productName = "Claude"
+
 	usageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 
 	// oauthBetaHeader gates the OAuth-token path on Anthropic's edge. Omitting
@@ -188,7 +193,7 @@ func decode(raw []byte, plan string, observedAt time.Time) (*quota.Snapshot, err
 		return nil, fmt.Errorf("decode usage document: %w", err)
 	}
 
-	snapshot := &quota.Snapshot{Vendor: VendorKey, ObservedAt: observedAt, Plan: plan}
+	snapshot := &quota.Snapshot{Vendor: VendorKey, Product: productName, ObservedAt: observedAt, Plan: plan}
 	snapshot.Meters = normalizedWindows(doc.Limits)
 	if len(snapshot.Meters) == 0 {
 		snapshot.Meters = legacyWindows(doc.FiveHour, doc.SevenDay)

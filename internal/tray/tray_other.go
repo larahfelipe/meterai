@@ -51,7 +51,7 @@ func run(ctx context.Context, w io.Writer, wiring Wiring) error {
 // asserted without capturing the process's stderr.
 func render(w io.Writer, presenter *Presenter, state PollState, account *identity.Account, now time.Time) {
 	fmt.Fprintf(w, "\n[%s] meterAI\n", now.Format(time.RFC3339))
-	if header := presenter.HeaderText(state, account); header != "" {
+	if header := presenter.HeaderText(state); header != "" {
 		fmt.Fprintf(w, "  %s\n", header)
 	}
 	for _, row := range presenter.DetailRows(account) {

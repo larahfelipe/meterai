@@ -141,6 +141,11 @@ func (m Money) String() string {
 type Snapshot struct {
 	Vendor     string
 	ObservedAt time.Time
+	// Product is what the vendor calls the thing being metered ("Claude"), as
+	// opposed to Vendor, which is the stable key ("anthropic"). It is display
+	// only, and empty when a provider states none, in which case the UI falls
+	// back to Vendor.
+	Product string
 	// Plan is the vendor's subscription label ("pro", "max"), for display only;
 	// no behaviour keys off it.
 	Plan   string

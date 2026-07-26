@@ -23,7 +23,7 @@ const (
 	// maxDetailRows bounds the pre-allocated rows of the details submenu. It
 	// matches the number of account fields DetailRows can produce; like the meter
 	// rows, they exist from startup because systray cannot remove an item.
-	maxDetailRows = 2
+	maxDetailRows = 3
 
 	// maxMeterRows bounds the pre-allocated menu entries. systray can add items
 	// but never remove them, so the rows are created once at startup and hidden
@@ -300,7 +300,7 @@ func (v *menuView) apply(state PollState, now time.Time) {
 }
 
 func (v *menuView) applyAccount(state PollState, account *identity.Account) {
-	if header := v.presenter.HeaderText(state, account); header != "" {
+	if header := v.presenter.HeaderText(state); header != "" {
 		v.header.SetTitle(header)
 		v.header.Show()
 	} else {

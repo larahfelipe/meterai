@@ -72,6 +72,10 @@ func TestDecodeLiveShape(t *testing.T) {
 		t.Errorf("Reset = %v, want %v", session.Reset, wantReset)
 	}
 
+	if snap.Product != "Claude" {
+		t.Errorf("Product = %q, want the product name the subscription is sold as", snap.Product)
+	}
+
 	// The active window must win the tray summary even though its percentage
 	// is compared against an inactive one.
 	primary := snap.Primary()

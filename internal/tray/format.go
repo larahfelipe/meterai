@@ -36,9 +36,14 @@ const (
 	// menuFieldGap separates a menu row's fields. Three spaces is what reads as a
 	// column break in the shell's proportional menu font.
 	menuFieldGap = "   "
-	// headerFieldGap joins the account name to the plan on the header row. The
-	// middle dot reads as a divider at any font size, unlike a hyphen.
-	headerFieldGap = " · "
+	// menuRightAlign is the tab Windows treats as a column break in a menu item:
+	// everything after it is drawn flush against the right edge of the menu. It is
+	// what keeps the gauges in one column when the labels beside them differ in
+	// length; padding with spaces cannot, because the menu font is proportional.
+	menuRightAlign = "\t"
+	// headerFieldGap joins the product name to the plan on the header row. They
+	// read as one product name ("Claude Max"), so the separator is a plain space.
+	headerFieldGap = " "
 )
 
 // PollState aliases the poller's state so the platform-specific files in this
@@ -93,18 +98,25 @@ type Row struct {
 	Detail string
 }
 
-// MenuRowTitle lays out one row as a single menu caption, skipping a field the
-// meter does not have so an uncapped balance shows no gap where a gauge would be.
-// It lives here rather than in the platform glue because it is the one part of
-// the menu's appearance that can be asserted on any host.
+// MenuRowTitle lays out one row as a single menu caption: the label and its
+// figures on the left, the gauge pushed to the right edge. A field the meter does
+// not have is skipped, so an uncapped balance shows no gap where a gauge would be,
+// and a row with no gauge carries no column break at all.
+//
+// It lives here rather than in the platform glue because it is the one part of the
+// menu's appearance that can be asserted on any host.
 func MenuRowTitle(row Row) string {
-	fields := make([]string, 0, 3)
-	for _, field := range []string{row.Label, row.Bar, row.Detail} {
+	left := make([]string, 0, 2)
+	for _, field := range []string{row.Label, row.Detail} {
 		if field != "" {
-			fields = append(fields, field)
+			left = append(left, field)
 		}
 	}
-	return strings.Join(fields, menuFieldGap)
+	title := strings.Join(left, menuFieldGap)
+	if row.Bar == "" {
+		return title
+	}
+	return title + menuRightAlign + row.Bar
 }
 
 // Presenter turns poll state into the text and icon inputs the platform layer
@@ -120,24 +132,26 @@ func NewPresenter(cfg config.Config) *Presenter {
 	return &Presenter{cfg: cfg, catalog: cfg.Catalog()}
 }
 
-// HeaderText names what is being monitored, in one row: who the account belongs
-// to and which plan it is on. It returns an empty string when neither is known
-// yet, so the row can be hidden rather than showing a bare separator.
+// HeaderText names what is being monitored, in one row: the provider and the
+// plan. It returns an empty string before the first successful poll, so the row
+// can be hidden rather than showing a bare separator.
 //
-// The account may be nil — it is unknown until the first credential read, and
-// stays unknown on an installation whose state document cannot be read.
-func (p *Presenter) HeaderText(state poll.State, account *identity.Account) string {
-	fields := make([]string, 0, 2)
-	if account != nil {
-		// The display name is the friendlier label, but an account that never set
-		// one is still identified by its address.
-		if account.DisplayName != "" {
-			fields = append(fields, account.DisplayName)
-		} else if account.Email != "" {
-			fields = append(fields, account.Email)
-		}
+// Who the account belongs to is deliberately not here — it is one level down, in
+// DetailRows, because the row read at a glance should answer "which service and
+// which allowance", not "which person".
+func (p *Presenter) HeaderText(state poll.State) string {
+	if state.Snapshot == nil {
+		return ""
 	}
-	if state.Snapshot != nil && state.Snapshot.Plan != "" {
+	fields := make([]string, 0, 2)
+	// Product is the vendor's own name for what is metered; Vendor is only a key,
+	// so it stands in just when a provider states no product.
+	if product := state.Snapshot.Product; product != "" {
+		fields = append(fields, product)
+	} else if state.Snapshot.Vendor != "" {
+		fields = append(fields, capitalizeFirst(state.Snapshot.Vendor))
+	}
+	if state.Snapshot.Plan != "" {
 		fields = append(fields, capitalizeFirst(state.Snapshot.Plan))
 	}
 	return strings.Join(fields, headerFieldGap)
@@ -150,11 +164,12 @@ func (p *Presenter) DetailRows(account *identity.Account) []Row {
 	if account == nil {
 		return nil
 	}
-	rows := make([]Row, 0, 2)
+	rows := make([]Row, 0, 3)
 	for _, field := range []struct {
 		key   i18n.Key
 		value string
 	}{
+		{i18n.AccountName, account.DisplayName},
 		{i18n.AccountEmail, account.Email},
 		{i18n.AccountOrganization, account.Organization},
 	} {

@@ -34,8 +34,9 @@ func presenterFor(t *testing.T, lang i18n.Lang) *Presenter {
 func liveState() poll.State {
 	return poll.State{
 		Snapshot: &quota.Snapshot{
-			Vendor: "anthropic",
-			Plan:   "pro",
+			Vendor:  "anthropic",
+			Product: "Claude",
+			Plan:    "pro",
 			Meters: []quota.Meter{
 				&quota.Utilization{
 					MeterID: "anthropic:session", Name: "session", Percent: 23,
@@ -61,7 +62,7 @@ func TestRowsRenderMetersInProviderOrder(t *testing.T) {
 	if rows[0].Label != "Sessão (5h)" || rows[0].Detail != "23% · reset em 2h54" {
 		t.Errorf("row 0 = %+v", rows[0])
 	}
-	if rows[1].Label != "Semanal" || rows[1].Detail != "74% · reset em 1d01h" {
+	if rows[1].Label != "Semanal (7d)" || rows[1].Detail != "74% · reset em 1d01h" {
 		t.Errorf("row 1 = %+v", rows[1])
 	}
 }
@@ -71,7 +72,7 @@ func TestRowsRenderInTheDefaultLanguage(t *testing.T) {
 	if rows[0].Label != "Session (5h)" || rows[0].Detail != "23% · resets in 2h54" {
 		t.Errorf("row 0 = %+v", rows[0])
 	}
-	if rows[1].Label != "Weekly" || rows[1].Detail != "74% · resets in 1d01h" {
+	if rows[1].Label != "Weekly (7d)" || rows[1].Detail != "74% · resets in 1d01h" {
 		t.Errorf("row 1 = %+v", rows[1])
 	}
 }
@@ -122,8 +123,8 @@ func TestRowsRenderMoneyMeters(t *testing.T) {
 func TestFormatCountdown(t *testing.T) {
 	presenter := presenterFor(t, i18n.LangPtBR)
 	cases := map[time.Duration]string{
-		-time.Hour:                      "agora",
-		0:                               "agora",
+		-time.Hour:                      "instantes",
+		0:                               "instantes",
 		30 * time.Second:                "<1min",
 		time.Minute:                     "1min",
 		59*time.Minute + 59*time.Second: "59min",
@@ -326,60 +327,58 @@ func TestIconStateMarksStaleOnFailure(t *testing.T) {
 	}
 }
 
-func TestHeaderTextNamesTheAccountAndPlan(t *testing.T) {
+func TestHeaderTextNamesTheProviderAndPlan(t *testing.T) {
 	presenter := presenterFor(t, i18n.LangEnUS)
 	for name, tc := range map[string]struct {
-		account *identity.Account
-		state   poll.State
-		want    string
+		state poll.State
+		want  string
 	}{
-		"name and plan": {
-			&identity.Account{DisplayName: "Sample", Email: "sample@example.com"},
-			liveState(), "Sample · Pro",
+		"product and plan":      {liveState(), "Claude Pro"},
+		"nothing before a poll": {poll.State{}, ""},
+		"product without a plan": {
+			poll.State{Snapshot: &quota.Snapshot{Vendor: "anthropic", Product: "Claude"}}, "Claude",
 		},
-		"address stands in for a missing display name": {
-			&identity.Account{Email: "sample@example.com"},
-			liveState(), "sample@example.com · Pro",
+		// A provider that states no product name falls back to its key, which is
+		// still recognizable, rather than heading the menu with a bare plan.
+		"vendor stands in for a missing product": {
+			poll.State{Snapshot: &quota.Snapshot{Vendor: "openrouter", Plan: "team"}}, "Openrouter Team",
 		},
-		"plan only while the account is unknown": {
-			nil, liveState(), "Pro",
-		},
-		"account only before the first poll": {
-			&identity.Account{DisplayName: "Sample"},
-			poll.State{}, "Sample",
-		},
-		"organization alone does not identify the account": {
-			&identity.Account{Organization: "Sample Org"},
-			poll.State{}, "",
-		},
-		"nothing known yet": {nil, poll.State{}, ""},
-		"snapshot without a plan": {
-			nil,
-			poll.State{Snapshot: &quota.Snapshot{Vendor: "anthropic"}},
-			"",
-		},
+		"plan without either":     {poll.State{Snapshot: &quota.Snapshot{Plan: "max"}}, "Max"},
+		"snapshot naming neither": {poll.State{Snapshot: &quota.Snapshot{}}, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := presenter.HeaderText(tc.state, tc.account); got != tc.want {
+			if got := presenter.HeaderText(tc.state); got != tc.want {
 				t.Errorf("HeaderText() = %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
+// Who the account belongs to belongs one level down: the header answers which
+// service and which allowance, not which person.
+func TestHeaderTextCarriesNoAccountDetail(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangEnUS)
+	header := presenter.HeaderText(liveState())
+	for _, unwanted := range []string{"Sample", "sample@example.com", "Sample Org"} {
+		if strings.Contains(header, unwanted) {
+			t.Errorf("header %q carries account detail %q", header, unwanted)
+		}
+	}
+}
+
 func TestHeaderTextCapitalizesOnlyTheFirstRune(t *testing.T) {
 	presenter := presenterFor(t, i18n.LangEnUS)
 	for plan, want := range map[string]string{
-		"max":       "Max",
-		"pro":       "Pro",
-		"Max":       "Max",
-		"max_5x":    "Max_5x",
-		"étudiant":  "Étudiant",
-		"\xff":      "\xff",
-		"enterPris": "EnterPris",
+		"max":       "Claude Max",
+		"pro":       "Claude Pro",
+		"Max":       "Claude Max",
+		"max_5x":    "Claude Max_5x",
+		"étudiant":  "Claude Étudiant",
+		"\xff":      "Claude \xff",
+		"enterPris": "Claude EnterPris",
 	} {
-		state := poll.State{Snapshot: &quota.Snapshot{Plan: plan}}
-		if got := presenter.HeaderText(state, nil); got != want {
+		state := poll.State{Snapshot: &quota.Snapshot{Vendor: "anthropic", Product: "Claude", Plan: plan}}
+		if got := presenter.HeaderText(state); got != want {
 			t.Errorf("HeaderText() for plan %q = %q, want %q", plan, got, want)
 		}
 	}
@@ -391,24 +390,27 @@ func TestDetailRowsOmitFieldsTheVendorDidNotSupply(t *testing.T) {
 	full := presenter.DetailRows(&identity.Account{
 		DisplayName: "Sample", Email: "sample@example.com", Organization: "Sample Org",
 	})
-	if len(full) != 2 {
-		t.Fatalf("rows = %d, want e-mail and organization", len(full))
+	if len(full) != 3 {
+		t.Fatalf("rows = %d, want the account name, e-mail and organization", len(full))
 	}
-	if full[0].Label != "E-mail" || full[0].Detail != "sample@example.com" {
+	if full[0].Label != "Account" || full[0].Detail != "Sample" {
 		t.Errorf("row 0 = %+v", full[0])
 	}
-	if full[1].Label != "Organization" || full[1].Detail != "Sample Org" {
+	if full[1].Label != "E-mail" || full[1].Detail != "sample@example.com" {
 		t.Errorf("row 1 = %+v", full[1])
 	}
+	if full[2].Label != "Organization" || full[2].Detail != "Sample Org" {
+		t.Errorf("row 2 = %+v", full[2])
+	}
 
-	// A personal account has no organization, and one with only a display name has
-	// nothing to put under Details at all.
+	// A personal account has no organization; one with only a display name still
+	// has a row now that the name lives here.
 	personal := presenter.DetailRows(&identity.Account{Email: "sample@example.com"})
 	if len(personal) != 1 || personal[0].Detail != "sample@example.com" {
 		t.Errorf("personal rows = %+v", personal)
 	}
-	if rows := presenter.DetailRows(&identity.Account{DisplayName: "Sample"}); len(rows) != 0 {
-		t.Errorf("rows = %+v, want none when only the display name is known", rows)
+	if rows := presenter.DetailRows(&identity.Account{DisplayName: "Sample"}); len(rows) != 1 {
+		t.Errorf("rows = %+v, want the account name", rows)
 	}
 	if rows := presenter.DetailRows(nil); rows != nil {
 		t.Errorf("rows = %+v, want nil while the account is unknown", rows)
@@ -420,5 +422,48 @@ func TestDetailRowLabelsAreLocalized(t *testing.T) {
 	rows := presenterFor(t, i18n.LangPtBR).DetailRows(account)
 	if len(rows) != 2 || rows[1].Label != "Organização" {
 		t.Errorf("pt-BR rows = %+v", rows)
+	}
+}
+
+// A poll that has just landed must not be described by composing a zero-length
+// span into "%s ago": that produced "Atualizado há agora" and "Updated now ago".
+func TestStatusTextReadsNaturallyRightAfterAPoll(t *testing.T) {
+	justPolled := liveState()
+	justPolled.UpdatedAt = now
+	justPolled.NextPollAt = now.Add(5 * time.Minute)
+
+	for lang, want := range map[i18n.Lang]string{
+		i18n.LangEnUS: "Updated moments ago · next in 5m",
+		i18n.LangPtBR: "Atualizado há instantes · próxima em 5min",
+	} {
+		got := presenterFor(t, lang).StatusText(justPolled, now)
+		if got != want {
+			t.Errorf("%s: status = %q, want %q", lang, got, want)
+		}
+	}
+}
+
+// The same composition appears in the staleness disclosure and in every countdown
+// that has run out, so none of them may pair an instant with a span either.
+func TestNoStatusLinePairsAnInstantWithASpan(t *testing.T) {
+	overdue := liveState()
+	overdue.UpdatedAt = now
+	overdue.NextPollAt = now
+	overdue.LastError = &quota.FetchError{Kind: quota.Transient, Err: errors.New("offline")}
+	overdue.Snapshot.Meters[0].(*quota.Utilization).Reset = now
+
+	for _, lang := range i18n.Available() {
+		presenter := presenterFor(t, lang)
+		texts := []string{presenter.StatusText(overdue, now), presenter.Tooltip(overdue, now)}
+		for _, row := range presenter.Rows(overdue, now) {
+			texts = append(texts, row.Detail)
+		}
+		for _, text := range texts {
+			for _, broken := range []string{"há agora", "now ago", "de agora atrás", "in now", "em agora"} {
+				if strings.Contains(text, broken) {
+					t.Errorf("%s: %q composes an instant into a span (%q)", lang, text, broken)
+				}
+			}
+		}
 	}
 }

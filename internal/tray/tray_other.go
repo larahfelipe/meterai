@@ -35,7 +35,7 @@ func Run(ctx context.Context, cfg config.Config, updates <-chan struct{}, contro
 func render(w io.Writer, presenter *Presenter, state PollState, now time.Time) {
 	fmt.Fprintf(w, "\n[%s] meterAI\n", now.Format(time.RFC3339))
 	for _, row := range presenter.Rows(state, now) {
-		fmt.Fprintf(w, "  %-16s %s\n", row.Label, row.Detail)
+		fmt.Fprintf(w, "  %-16s %-10s %s\n", row.Label, row.Bar, row.Detail)
 	}
 	fmt.Fprintf(w, "  %s\n", presenter.StatusText(state, now))
 }

@@ -30,6 +30,9 @@ const (
 	// labelDetailSeparator sets a meter's figures apart from its name inside one
 	// tooltip line, where a single space reads as part of the label.
 	labelDetailSeparator = "  "
+	// menuFieldGap separates a menu row's fields. Three spaces is what reads as a
+	// column break in the shell's proportional menu font.
+	menuFieldGap = "   "
 )
 
 // PollState aliases the poller's state so the platform-specific files in this
@@ -44,10 +47,27 @@ type Controller interface {
 	Refresh() bool
 }
 
-// Row is one meter as presented in the menu: a name and its current figures.
+// Row is one meter as presented in the menu: a name, a gauge, and its current
+// figures. Bar is empty for a meter with no bounded percentage, such as an
+// uncapped balance, where a gauge would imply a limit the vendor never stated.
 type Row struct {
 	Label  string
+	Bar    string
 	Detail string
+}
+
+// MenuRowTitle lays out one row as a single menu caption, skipping a field the
+// meter does not have so an uncapped balance shows no gap where a gauge would be.
+// It lives here rather than in the platform glue because it is the one part of
+// the menu's appearance that can be asserted on any host.
+func MenuRowTitle(row Row) string {
+	fields := make([]string, 0, 3)
+	for _, field := range []string{row.Label, row.Bar, row.Detail} {
+		if field != "" {
+			fields = append(fields, field)
+		}
+	}
+	return strings.Join(fields, menuFieldGap)
 }
 
 // Presenter turns poll state into the text and icon inputs the platform layer
@@ -73,10 +93,27 @@ func (p *Presenter) Rows(state poll.State, now time.Time) []Row {
 	for _, meter := range state.Snapshot.Meters {
 		rows = append(rows, Row{
 			Label:  p.catalog.MeterLabel(meter.ID(), meter.Label()),
+			Bar:    meterBar(meter),
 			Detail: p.detail(meter, now),
 		})
 	}
 	return rows
+}
+
+// meterBar renders a gauge only for a meter whose percentage is bounded by an
+// allowance. An uncapped balance reports a zero percent that means "no limit
+// exists", not "nothing consumed", so it gets no gauge.
+func meterBar(meter quota.Meter) string {
+	switch m := meter.(type) {
+	case *quota.Utilization:
+		return progressBar(m.Percent)
+	case *quota.Balance:
+		if m.Limit == nil {
+			return ""
+		}
+		return progressBar(m.Percent)
+	}
+	return ""
 }
 
 func (p *Presenter) detail(meter quota.Meter, now time.Time) string {
@@ -162,6 +199,10 @@ func (p *Presenter) humanizeError(err error) string {
 // Tooltip renders the hover text. Every line is included until the platform
 // limit is reached, so the most important meters must come first, which is why
 // provider order is preserved rather than sorted.
+//
+// Gauges are deliberately left out: at maxTooltipRunes, ten cells per meter
+// would cost more of the budget than the figures themselves and push the status
+// line out of the tooltip entirely.
 func (p *Presenter) Tooltip(state poll.State, now time.Time) string {
 	lines := make([]string, 0, 4)
 	if state.Snapshot != nil {

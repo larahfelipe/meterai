@@ -135,8 +135,11 @@ polling, backoff, formatting — can be exercised on the development host.
 Run `dist\meterAI.exe`. The icon appears in the notification area.
 
 - **Hovering** shows each quota window, its percentage, and the time to reset.
-- **Clicking** opens a menu with the same information, plus *Atualizar agora*
-  (refresh now) and *Sair* (quit).
+  The tooltip carries no gauges: the shell caps it at 127 characters, and ten
+  cells per meter would push the status line out of it.
+- **Clicking** opens a menu with the same information plus a gauge per meter,
+  followed by *Refresh now* and *Quit*. A meter with no stated allowance, such as
+  an uncapped balance, shows no gauge rather than an empty one.
 - The **icon colour** follows severity: green, amber, red.
 - The icon turns **grey** when the displayed figures are no longer being
   confirmed; the menu states how old they are.

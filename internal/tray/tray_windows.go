@@ -24,10 +24,6 @@ const (
 	// while unused; a provider reporting more meters than this shows the first
 	// maxMeterRows, which is why provider order is significant.
 	maxMeterRows = 6
-
-	// rowLabelDetailGap separates a meter's name from its figures in a menu row.
-	// Three spaces is what reads as a column break in the shell's menu font.
-	rowLabelDetailGap = "   "
 )
 
 // Run displays the tray icon and blocks until the user quits or ctx is
@@ -111,7 +107,7 @@ func (v *menuView) apply(state PollState, now time.Time) {
 			item.Hide()
 			continue
 		}
-		item.SetTitle(rows[i].Label + rowLabelDetailGap + rows[i].Detail)
+		item.SetTitle(MenuRowTitle(rows[i]))
 		item.Show()
 	}
 	v.status.SetTitle(v.presenter.StatusText(state, now))

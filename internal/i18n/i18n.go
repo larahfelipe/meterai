@@ -98,6 +98,8 @@ const (
 	AccountName
 	AccountEmail
 	AccountOrganization
+	PreferredModel
+	PreferredEffort
 	MenuQuit
 	RefreshRejected
 	MeterResetSuffix
@@ -134,6 +136,8 @@ var keyNames = [keyCount]string{
 	AccountName:          "AccountName",
 	AccountEmail:         "AccountEmail",
 	AccountOrganization:  "AccountOrganization",
+	PreferredModel:       "PreferredModel",
+	PreferredEffort:      "PreferredEffort",
 	MenuQuit:             "MenuQuit",
 	RefreshRejected:      "RefreshRejected",
 	MeterResetSuffix:     "MeterResetSuffix",

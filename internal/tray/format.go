@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/larahfelipe/meterai/internal/buildinfo"
 	"github.com/larahfelipe/meterai/internal/config"
 	"github.com/larahfelipe/meterai/internal/i18n"
 	"github.com/larahfelipe/meterai/internal/identity"
@@ -28,7 +29,7 @@ const maxTooltipRunes = 127
 // outside i18n because it is identical in every language. Windows announces it as
 // the accessible name of the tray icon, and it heads the menu until a provider
 // has been reached.
-const AppName = "meterAI"
+const AppName = buildinfo.Name
 
 const (
 	ellipsis = "…"
@@ -90,22 +91,28 @@ type Wiring struct {
 	// leave a stale reading on screen.
 	Updates    <-chan struct{}
 	Controller Controller
-	Accounts   AccountReader
+	CLI        CLIReader
 	// SaveSettings persists a changed document. It is a function so the tray
 	// never learns where the config file lives, and a failure to write leaves the
 	// running configuration untouched.
 	SaveSettings func(config.Config) error
 }
 
-// AccountReader reports the account being monitored. It is consulted on every
-// update rather than once at startup because the credential path — and therefore
-// the account — is not known until the first successful poll.
+// CLIReader reports what the official CLI has recorded locally about the
+// installation being polled. It is consulted on every update rather than once at
+// startup because the credential path — and therefore which installation is being
+// described — is not known until the first successful poll.
 //
-// A nil account with a nil error means "not known yet". A non-nil error means the
-// account cannot be shown at all; the caller keeps rendering quota figures either
-// way, since neither case affects polling.
-type AccountReader interface {
+// A nil result with a nil error means "not known yet". A non-nil error means that
+// document cannot be shown at all; the caller keeps rendering quota figures in
+// either case, since neither affects polling, and one document failing never hides
+// the other.
+type CLIReader interface {
 	Account() (*identity.Account, error)
+	// Preferences reports the configured model and effort. They are the user-level
+	// default, not the model a session is running: the CLI resolves that per
+	// session from sources this app cannot observe.
+	Preferences() (*identity.Preferences, error)
 }
 
 // Row is one line of the menu under a single grammar: Label names the thing on
@@ -254,24 +261,38 @@ func accountHeadline(account *identity.Account) string {
 	return account.Email
 }
 
-// DetailRows are the account facts that answer "which subscription am I looking
-// at" without crowding the first level of the menu. Rows for fields the CLI never
-// cached are omitted rather than rendered empty, and so is whatever AccountRow
-// already shows: the same value twice in two levels of one menu reads as a bug.
-func (p *Presenter) DetailRows(account *identity.Account) []Row {
-	if account == nil {
-		return nil
-	}
+// DetailRows describe the installation being polled without crowding the first
+// level of the menu: who the subscription belongs to, then what the CLI is
+// configured to prefer. Rows for fields the CLI never recorded are omitted rather
+// than rendered empty, and so is whatever AccountRow already shows: the same value
+// twice in two levels of one menu reads as a bug.
+//
+// Either argument may be nil, which is the state before the credential path is
+// known and after a document that could not be read.
+//
+// The two preference values are shown verbatim. They are configuration the user
+// wrote, so changing their case would make the menu disagree with the file it is
+// reporting — which is the one thing a reader consults this row to check.
+func (p *Presenter) DetailRows(account *identity.Account, prefs *identity.Preferences) []Row {
 	shown := accountHeadline(account)
-	rows := make([]Row, 0, maxAccountRows)
-	for _, field := range []struct {
-		key   i18n.Key
-		value string
-	}{
-		{i18n.AccountName, account.DisplayName},
-		{i18n.AccountEmail, account.Email},
-		{i18n.AccountOrganization, account.Organization},
-	} {
+	fields := make([]detailField, 0, maxDetailRows+1)
+	if account != nil {
+		fields = append(fields,
+			detailField{i18n.AccountName, account.DisplayName},
+			detailField{i18n.AccountEmail, account.Email},
+			detailField{i18n.AccountOrganization, account.Organization},
+		)
+	}
+	if prefs != nil {
+		fields = append(fields,
+			detailField{i18n.PreferredModel, prefs.Model},
+			detailField{i18n.PreferredEffort, prefs.EffortLevel},
+		)
+	}
+
+	// Left nil when nothing has a value: the submenu hides on an empty result.
+	var rows []Row
+	for _, field := range fields {
 		if field.value == "" || field.value == shown {
 			continue
 		}
@@ -280,10 +301,19 @@ func (p *Presenter) DetailRows(account *identity.Account) []Row {
 	return rows
 }
 
-// maxAccountRows is the most rows DetailRows can produce: one of the three fields
-// always heads the menu instead. The platform layer pre-allocates exactly this
-// many submenu rows, so a test asserts the ceiling rather than trusting it.
-const maxAccountRows = 2
+// detailField pairs a caption key with the value it labels, so the fields of two
+// separate documents can be assembled into one ordered list.
+type detailField struct {
+	key   i18n.Key
+	value string
+}
+
+// maxDetailRows is the most rows DetailRows can produce: the account contributes
+// at most two, because one of its three fields always heads the menu instead, and
+// the settings document contributes two. The platform layer pre-allocates exactly
+// this many submenu rows and can never add another, so a test asserts the ceiling
+// rather than trusting it.
+const maxDetailRows = 4
 
 // capitalizeFirst title-cases a vendor's plan label, which arrives lowercase
 // ("max", "pro"). Only the first rune is touched: the rest is the vendor's own

@@ -1,9 +1,11 @@
-// Package identity reads the account details the official Claude CLI caches in
-// its own state document. It exists so the UI can name the account being
-// monitored without this app calling a profile endpoint of its own: the CLI has
-// already fetched that profile and written it to disk, so reading its cache
+// Package identity reads what the official Claude CLI has recorded locally about
+// the installation being polled: the account it cached in its state document, and
+// the model and effort declared in its settings document. It exists so the UI can
+// describe that installation without this app calling an endpoint of its own — the
+// CLI has already fetched the profile and written it to disk, so reading its cache
 // costs no request, works offline, and adds no second undocumented endpoint to
-// depend on.
+// depend on. Neither figure is available remotely at all: the quota endpoint
+// reports windows and spend, and nothing else.
 //
 // The trade-off is a schema nobody publishes. The document carries a
 // migrationVersion the CLI has already bumped repeatedly, so every field here is

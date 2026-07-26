@@ -58,3 +58,25 @@ func (c *Cache) Account() (*Account, error) {
 	c.account, c.err = Load(statePath)
 	return c.account, c.err
 }
+
+// Preferences reports the model and effort the CLI is configured to prefer.
+//
+// Unlike Account, nothing is held: the settings document is small and the user can
+// change it at any moment, from the CLI itself or from an editor, so a value cached
+// for the life of the process would go on contradicting the file it came from. The
+// contract is otherwise identical — (nil, nil) while the credential path is still
+// unknown, and a non-nil error hides the rows without affecting polling.
+//
+// It holds no lock because it shares no field with Account: credentials is fixed
+// at construction and everything else here is local.
+func (c *Cache) Preferences() (*Preferences, error) {
+	path := c.credentials.Source()
+	if path == "" {
+		return nil, nil
+	}
+	settingsPath, err := SettingsPathFor(path)
+	if err != nil {
+		return nil, err
+	}
+	return LoadPreferences(settingsPath)
+}

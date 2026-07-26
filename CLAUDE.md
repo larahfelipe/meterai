@@ -14,13 +14,18 @@ GOOS=windows go vet ./...      # REQUIRED before calling any change done
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
   go build -trimpath -ldflags="-s -w -H=windowsgui" -o dist/meterAI.exe ./cmd/meterai
 go run ./cmd/meterai           # headless: prints each poll to stderr (see tray_other.go)
+go generate ./cmd/meterai      # only after internal/buildinfo changes; a test catches drift
+
+# the Windows build's own tests, executed here through WSL binfmt
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -c -o /tmp/cred.exe ./internal/credential && /tmp/cred.exe
 ```
 
 **A clean local run does not mean it compiles.** `singleton_windows.go`, `locate_windows.go` and
-`tray_windows.go` are excluded from every Linux build, vet and test. `GOOS=windows go vet ./...` is
-the only automated check they get: none of the three has a single test. WSL binfmt does execute
-`GOOS=windows go test -c` binaries here, so Windows-tagged tests are possible — there just are none
-yet, and that is the largest hole in the suite.
+`tray_windows.go` are excluded from every Linux build, vet and test. WSL binfmt *does* execute
+`GOOS=windows go test -c` binaries here, and `locate_windows_test.go` now uses that: it is the only
+Windows-tagged test in the project, and running it is what surfaced that `locate_test.go` had no
+build tag and was asserting Unix semantics against the Windows build. `singleton_windows.go` and
+`tray_windows.go` still have none, which is the largest remaining hole in the suite.
 
 `CGO_ENABLED=0` is a requirement, not a convenience: it is what allows cross-compilation with no C
 toolchain. Do not add a dependency that needs CGO.
@@ -38,8 +43,18 @@ changing it changes every layer above. `cmd/meterai/main.go` wires everything to
 
 `identity.Cache` takes the credential path from `credential.Cache` rather than resolving a home
 directory, which is what keeps the account shown in the menu tied to the subscription being polled.
-It is read at most once per credential path and every failure is non-fatal: the account rows hide and
-polling continues.
+It reads two CLI documents with different policies: `.claude.json` (the account) at most once per
+credential path, since it only changes on re-authentication; `.claude/settings.json` (the configured
+model and effort) on every call, since the user can rewrite it at any moment. Both are read
+independently and every failure is non-fatal — one document failing hides its own rows only, and
+polling continues either way.
+
+**Neither the model nor the effort exists remotely**, and the local file gives a *default*, not what a
+session is running: the CLI resolves that from a runtime `/model`, an environment variable and
+project-level settings, none of which this app can observe. The labels say "default" for that reason —
+`lastModelUsage` in the state document is worse still, being per project directory and written at
+session end. `settings.json` also holds an `env` block that can carry other services' credentials, so
+only the two fields are decoded and no error path quotes the document.
 
 Vendor-specific knowledge stops inside `internal/provider/<vendor>/`. Never name that directory
 `vendor`: Go silently drops such a directory from build, vet and tests with no warning.
@@ -64,7 +79,28 @@ neutralized there, and an i18n test asserts no catalogue string needs it.
 hover help would have to be owner-drawn; a row that cannot say what it means in its own caption
 cannot say it at all. That is why the tooltip catalogue keys no longer exist.
 
+`internal/buildinfo` and `internal/winres` sit outside that graph. `buildinfo` is a leaf holding the
+product name and version, so the outbound User-Agent, the tray's accessible name and the version
+resource cannot claim three different things. `winres` is build-time only — nothing at runtime
+imports it — and encodes the version resource and manifest into
+`cmd/meterai/meterai_windows_amd64.syso`, which is committed and guarded by a drift test.
+
 ## Invariants that span files
+
+**The app's footprint on the machine is fixed, and every item below is a ceiling rather than a
+default.** It handles someone's credentials, so what it touches has to stay small enough to state in
+one paragraph:
+
+- `wsl.exe -l -q`, with a fixed argument list, is **the only process it may ever create**. Nothing is
+  executed inside a distribution; home directories are listed over UNC instead.
+- Any name enumerated from another operating system passes `isPlainName` before it becomes part of a
+  path, so a distribution or directory named `..\..\something` cannot reach outside the tree.
+- One network destination, and it is the vendor's own API.
+- Two files written: the config document and the icon files systray puts in `%TEMP%`. No registry
+  write, no startup entry, no service, no scheduled task.
+- No dynamic code loading of its own, and no elevation: the manifest declares `asInvoker`.
+
+README states this to users; widening any of it makes that section wrong.
 
 **Never write to the credential file.** No OAuth flow, no refresh, no rewrite. Anthropic's
 `refresh_token` rotates on use, so refreshing here would invalidate the copy the CLI holds and log

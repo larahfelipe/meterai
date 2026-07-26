@@ -18,7 +18,7 @@ import (
 
 func TestRenderWritesEveryMeterAndTheStatusLine(t *testing.T) {
 	var out bytes.Buffer
-	render(&out, presenterFor(t, i18n.LangEnUS), liveState(), nil, now)
+	render(&out, presenterFor(t, i18n.LangEnUS), liveState(), nil, nil, now)
 
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	// A blank line, the timestamp banner, the provider header, one line per meter,
@@ -49,7 +49,7 @@ func TestRenderWritesEveryMeterAndTheStatusLine(t *testing.T) {
 func TestRenderWritesTheAccountItIsGiven(t *testing.T) {
 	var out bytes.Buffer
 	account := &identity.Account{DisplayName: "Sample", Email: "sample@example.com", Organization: "Sample Org"}
-	render(&out, presenterFor(t, i18n.LangEnUS), liveState(), account, now)
+	render(&out, presenterFor(t, i18n.LangEnUS), liveState(), account, samplePreferences, now)
 
 	for _, want := range []string{"Claude Pro", "Sample", "sample@example.com", "Sample Org"} {
 		if !strings.Contains(out.String(), want) {
@@ -60,7 +60,7 @@ func TestRenderWritesTheAccountItIsGiven(t *testing.T) {
 
 func TestRenderBeforeTheFirstPollWritesNoReading(t *testing.T) {
 	var out bytes.Buffer
-	render(&out, presenterFor(t, i18n.LangEnUS), poll.State{}, nil, now)
+	render(&out, presenterFor(t, i18n.LangEnUS), poll.State{}, nil, nil, now)
 
 	// Nothing has been read yet, so the account and every meter row are absent: a
 	// blank line, the banner, the app's own heading, the status line and the two
@@ -78,19 +78,23 @@ func TestRenderBeforeTheFirstPollWritesNoReading(t *testing.T) {
 	}
 }
 
-// stubController and stubAccounts stand in for the poller and the identity cache.
+// stubController and stubCLI stand in for the poller and the identity cache.
 type stubController struct{ state poll.State }
 
 func (s stubController) State() poll.State       { return s.state }
 func (stubController) Refresh() bool             { return true }
 func (stubController) SetInterval(time.Duration) {}
 
-type stubAccounts struct {
-	account *identity.Account
-	err     error
+type stubCLI struct {
+	account    *identity.Account
+	accountErr error
+	prefs      *identity.Preferences
+	prefsErr   error
 }
 
-func (s stubAccounts) Account() (*identity.Account, error) { return s.account, s.err }
+func (s stubCLI) Account() (*identity.Account, error) { return s.account, s.accountErr }
+
+func (s stubCLI) Preferences() (*identity.Preferences, error) { return s.prefs, s.prefsErr }
 
 func TestRunRendersOnceAndUnwindsWithTheContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -102,7 +106,10 @@ func TestRunRendersOnceAndUnwindsWithTheContext(t *testing.T) {
 		Config:     cfg,
 		Updates:    make(chan struct{}),
 		Controller: stubController{state: liveState()},
-		Accounts:   stubAccounts{account: &identity.Account{DisplayName: "Sample"}},
+		CLI: stubCLI{
+			account: &identity.Account{DisplayName: "Sample"},
+			prefs:   &identity.Preferences{Model: "opus", EffortLevel: "high"},
+		},
 	})
 
 	if !errors.Is(err, context.Canceled) {
@@ -110,12 +117,16 @@ func TestRunRendersOnceAndUnwindsWithTheContext(t *testing.T) {
 	}
 	// The first reading is printed before the loop, so a cancelled context still
 	// produces output rather than exiting silently.
-	if !strings.Contains(out.String(), "Claude Pro") {
-		t.Errorf("output = %q", out.String())
+	for _, want := range []string{"Claude Pro", "Sample", "opus", "high"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output does not carry %q: %q", want, out.String())
+		}
 	}
 }
 
-func TestRunReportsAnUnreadableAccountWithoutStopping(t *testing.T) {
+// The two documents are read independently, so one failing must not hide the
+// other's rows or stop the poll from being reported.
+func TestRunReportsAnUnreadableDocumentWithoutStopping(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -124,7 +135,10 @@ func TestRunReportsAnUnreadableAccountWithoutStopping(t *testing.T) {
 		Config:     config.Default(),
 		Updates:    make(chan struct{}),
 		Controller: stubController{state: liveState()},
-		Accounts:   stubAccounts{err: errors.New("state document is unreadable")},
+		CLI: stubCLI{
+			accountErr: errors.New("state document is unreadable"),
+			prefs:      &identity.Preferences{Model: "opus"},
+		},
 	})
 
 	if !errors.Is(err, context.Canceled) {
@@ -133,8 +147,40 @@ func TestRunReportsAnUnreadableAccountWithoutStopping(t *testing.T) {
 	if !strings.Contains(out.String(), "account details unavailable") {
 		t.Errorf("output does not disclose the failure: %q", out.String())
 	}
+	// The settings document was readable, so its row survives the other's failure.
+	if !strings.Contains(out.String(), "opus") {
+		t.Errorf("output lost the preference rows: %q", out.String())
+	}
 	// Quota figures must survive an account that cannot be read.
 	if !strings.Contains(out.String(), "Session (5h)") {
 		t.Errorf("output lost the meter rows: %q", out.String())
+	}
+}
+
+func TestRunReportsUnreadablePreferencesWithoutStopping(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var out bytes.Buffer
+	err := run(ctx, &out, Wiring{
+		Config:     config.Default(),
+		Updates:    make(chan struct{}),
+		Controller: stubController{state: liveState()},
+		CLI: stubCLI{
+			account:  &identity.Account{DisplayName: "Sample", Email: "sample@example.com"},
+			prefsErr: errors.New("settings document is unreadable"),
+		},
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run() = %v, want context.Canceled", err)
+	}
+	if !strings.Contains(out.String(), "CLI preferences unavailable") {
+		t.Errorf("output does not disclose the failure: %q", out.String())
+	}
+	for _, want := range []string{"Sample", "sample@example.com", "Session (5h)"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lost %q to the other document's failure: %q", want, out.String())
+		}
 	}
 }

@@ -16,11 +16,6 @@ import (
 )
 
 const (
-	// maxDetailRows bounds the pre-allocated rows of the details submenu. It is
-	// the ceiling DetailRows is tested against; like the meter rows, they exist
-	// from startup because systray cannot remove an item.
-	maxDetailRows = maxAccountRows
-
 	// maxMeterRows bounds the pre-allocated menu entries. systray can add items
 	// but never remove them, so the rows are created once at startup and hidden
 	// while unused; a provider reporting more meters than this shows the first
@@ -108,7 +103,7 @@ func forwardChoice[T any](ctx context.Context, clicked <-chan struct{}, chosen c
 // goroutine started in onReady, so the fields need no synchronization.
 type menuView struct {
 	presenter *Presenter
-	accounts  AccountReader
+	cli       CLIReader
 	// controller and save apply a settings change to the running poller and to
 	// disk; the tray never learns where the config file lives.
 	controller Controller
@@ -145,7 +140,7 @@ type menuView struct {
 func newMenuView(wiring Wiring) *menuView {
 	view := &menuView{
 		presenter:  NewPresenter(wiring.Config),
-		accounts:   wiring.Accounts,
+		cli:        wiring.CLI,
 		controller: wiring.Controller,
 		save:       wiring.SaveSettings,
 	}
@@ -289,10 +284,13 @@ func setChecked(item *systray.MenuItem, checked bool) {
 }
 
 func (v *menuView) apply(state PollState, now time.Time) {
-	// A failure here is expected on a machine where the CLI has never signed in;
-	// the account rows stay hidden and the quota figures are unaffected.
-	account, _ := v.accounts.Account()
-	v.applyAccount(state, account)
+	// A failure in either document is expected on a machine where the CLI has
+	// never signed in or was never configured; those rows stay hidden and the
+	// quota figures are unaffected. They are read independently so one failing
+	// does not hide the other.
+	account, _ := v.cli.Account()
+	prefs, _ := v.cli.Preferences()
+	v.applyDetails(state, account, prefs)
 
 	percent, level, stale := v.presenter.IconState(state)
 	if icon := trayicon.Render(percent, level, stale); !bytes.Equal(icon, v.lastIcon) {
@@ -330,11 +328,11 @@ func setReadout(item *systray.MenuItem, row Row) {
 	item.Show()
 }
 
-func (v *menuView) applyAccount(state PollState, account *identity.Account) {
+func (v *menuView) applyDetails(state PollState, account *identity.Account, prefs *identity.Preferences) {
 	setReadout(v.header, v.presenter.HeaderRow(state))
 	setReadout(v.account, v.presenter.AccountRow(account))
 
-	rows := v.presenter.DetailRows(account)
+	rows := v.presenter.DetailRows(account, prefs)
 	applyRows(v.detailRows, rows)
 	if len(rows) == 0 {
 		v.details.Hide()

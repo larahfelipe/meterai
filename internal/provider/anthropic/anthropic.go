@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/larahfelipe/meterai/internal/buildinfo"
 	"github.com/larahfelipe/meterai/internal/credential"
 	"github.com/larahfelipe/meterai/internal/quota"
 )
@@ -31,9 +32,12 @@ const (
 
 	// oauthBetaHeader gates the OAuth-token path on Anthropic's edge. Omitting
 	// it is not known to work.
-	oauthBetaHeader     = "anthropic-beta"
-	oauthBetaValue      = "oauth-2025-04-20"
-	clientUserAgent     = "meterAI/0.1 (usage-monitor)"
+	oauthBetaHeader = "anthropic-beta"
+	oauthBetaValue  = "oauth-2025-04-20"
+	// clientUserAgent identifies this app to the endpoint. It names the product
+	// and its version from one place, so the traffic cannot claim a version the
+	// executable does not declare.
+	clientUserAgent     = buildinfo.Name + "/" + buildinfo.Version + " (usage-monitor)"
 	requestTimeout      = 20 * time.Second
 	maxResponseBytes    = 1 << 20
 	credentialSkewGuard = 5 * time.Minute

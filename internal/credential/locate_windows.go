@@ -50,17 +50,13 @@ const (
 	wslExe = "wsl.exe"
 )
 
-const (
-	// wslEnumTimeout bounds distro enumeration, which only queries the service
-	// registry and never boots a distro. A hang here means the WSL service
-	// itself is wedged.
-	wslEnumTimeout = 10 * time.Second
-
-	// wslHomeTimeout bounds $HOME resolution, which does boot the distro when
-	// it is stopped. A cold WSL2 boot is dominated by VM start and can take
-	// tens of seconds legitimately.
-	wslHomeTimeout = 90 * time.Second
-)
+// wslEnumTimeout bounds distro enumeration, which only queries the service
+// registry and never boots a distro. A hang here means the WSL service itself is
+// wedged.
+//
+// It is the only timeout left: resolving a home directory used to boot the
+// distribution to run a shell in it, and now reads the filesystem instead.
+const wslEnumTimeout = 10 * time.Second
 
 // systemDistros are shipped by other products and never contain a user's
 // Claude CLI state. Probing them would boot a VM for nothing.
@@ -72,9 +68,14 @@ var systemDistros = map[string]struct{}{
 }
 
 // Candidates returns probe paths in decreasing order of confidence. Enumerating
-// WSL distros requires spawning wsl.exe; if that fails the Windows-native
-// candidates are still returned, so a broken WSL install degrades rather than
-// blocks discovery.
+// WSL distros spawns wsl.exe once, with a fixed argument list and no shell; if
+// that fails the Windows-native candidates are still returned, so a broken WSL
+// install degrades rather than blocks discovery.
+//
+// Nothing is executed inside a distribution. Its home directories are read over
+// the same \\wsl.localhost transport the credential is read through, which is
+// why an unusual home location is out of reach and the credentialPath setting is
+// the answer for it.
 func Candidates(ctx context.Context, configuredPath string) ([]Candidate, error) {
 	var out []Candidate
 	if configuredPath != "" {
@@ -91,18 +92,25 @@ func Candidates(ctx context.Context, configuredPath string) ([]Candidate, error)
 		return out, err
 	}
 	for _, d := range distros {
-		home, err := distroHome(ctx, d)
-		if err != nil {
-			// A single unavailable distro must not hide the others.
-			continue
+		for _, path := range wslCredentialPaths(wslUNCRoot+`\`+d, readDirNames) {
+			out = append(out, Candidate{Path: path, Origin: OriginWSL, Distro: d})
 		}
-		out = append(out, Candidate{
-			Path:   wslUNCRoot + `\` + d + filepath.FromSlash(home) + `\` + claudeConfigDirName + `\` + credentialFileName,
-			Origin: OriginWSL,
-			Distro: d,
-		})
 	}
 	return out, nil
+}
+
+// readDirNames lists a directory's entry names. Reaching a stopped distribution
+// this way starts it, exactly as opening the credential file would.
+func readDirNames(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names, nil
 }
 
 // Discover returns the first candidate that yields valid credentials. Absent
@@ -146,24 +154,14 @@ func listDistros(ctx context.Context) ([]string, error) {
 		if _, isSystem := systemDistros[strings.ToLower(name)]; isSystem {
 			continue
 		}
+		// The name is about to become a path component. wsl.exe is trusted, but
+		// the distribution name is chosen by whoever registered it.
+		if !isPlainName(name) {
+			continue
+		}
 		out = append(out, name)
 	}
 	return out, nil
-}
-
-// distroHome resolves the login home directory inside a distro. It must be
-// queried rather than assumed: the WSL account name is chosen at distro setup
-// and need not match the Windows account.
-func distroHome(ctx context.Context, distro string) (string, error) {
-	raw, err := runWSL(ctx, wslHomeTimeout, "-d", distro, "-e", "sh", "-c", "echo $HOME")
-	if err != nil {
-		return "", err
-	}
-	home := strings.TrimSpace(raw)
-	if home == "" || !strings.HasPrefix(home, "/") {
-		return "", errors.New("distro " + distro + " reported no absolute $HOME")
-	}
-	return home, nil
 }
 
 func runWSL(ctx context.Context, timeout time.Duration, args ...string) (string, error) {

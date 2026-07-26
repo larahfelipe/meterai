@@ -2,6 +2,7 @@ package tray
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -523,60 +524,135 @@ func TestAccountRowShowsWhoTheSubscriptionBelongsTo(t *testing.T) {
 	}
 }
 
-func TestDetailRowsOmitFieldsTheDocumentDidNotSupply(t *testing.T) {
-	presenter := presenterFor(t, i18n.LangEnUS)
-
-	full := presenter.DetailRows(&identity.Account{
-		DisplayName: "Sample", Email: "sample@example.com", Organization: "Sample Org",
-	})
-	// The display name heads the menu, so repeating it here would show one value
-	// twice in two levels of the same menu.
-	if len(full) != 2 {
-		t.Fatalf("rows = %+v, want the e-mail and the organization", full)
-	}
-	if full[0].Label != "E-mail" || full[0].Detail != "sample@example.com" {
-		t.Errorf("row 0 = %+v", full[0])
-	}
-	if full[1].Label != "Organization" || full[1].Detail != "Sample Org" {
-		t.Errorf("row 1 = %+v", full[1])
-	}
-
-	// With no name cached the e-mail heads the menu instead, and drops from here.
-	nameless := presenter.DetailRows(&identity.Account{Email: "sample@example.com", Organization: "Sample Org"})
-	if len(nameless) != 1 || nameless[0].Detail != "Sample Org" {
-		t.Errorf("rows = %+v, want the organization alone", nameless)
-	}
-
-	if rows := presenter.DetailRows(&identity.Account{DisplayName: "Sample"}); len(rows) != 0 {
-		t.Errorf("rows = %+v, want none: the name is already in the header", rows)
-	}
-	if rows := presenter.DetailRows(nil); rows != nil {
-		t.Errorf("rows = %+v, want nil while the account is unknown", rows)
-	}
+var sampleAccount = &identity.Account{
+	DisplayName: "Sample", Email: "sample@example.com", Organization: "Sample Org",
 }
 
-// The platform layer pre-allocates exactly maxAccountRows submenu items and can
-// never add another, so no combination of fields may ask for more.
-func TestDetailRowsNeverExceedThePreAllocatedRows(t *testing.T) {
-	presenter := presenterFor(t, i18n.LangEnUS)
-	values := []string{"", "Sample"}
-	for _, name := range values {
-		for _, email := range values {
-			for _, org := range values {
-				account := &identity.Account{DisplayName: name, Email: email, Organization: org}
-				if rows := presenter.DetailRows(account); len(rows) > maxAccountRows {
-					t.Errorf("%+v produced %d rows, over the %d allocated", account, len(rows), maxAccountRows)
-				}
-			}
+var samplePreferences = &identity.Preferences{Model: "opus", EffortLevel: "high"}
+
+func TestDetailRowsDescribeTheAccountThenTheConfiguration(t *testing.T) {
+	rows := presenterFor(t, i18n.LangEnUS).DetailRows(sampleAccount, samplePreferences)
+	// The display name heads the menu, so repeating it here would show one value
+	// twice in two levels of the same menu.
+	want := []Row{
+		{Label: "E-mail", Detail: "sample@example.com"},
+		{Label: "Organization", Detail: "Sample Org"},
+		{Label: "Default model", Detail: "opus"},
+		{Label: "Default effort", Detail: "high"},
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("rows = %+v, want %d", rows, len(want))
+	}
+	for i, row := range rows {
+		if row != want[i] {
+			t.Errorf("row %d = %+v, want %+v", i, row, want[i])
 		}
 	}
 }
 
+// The two documents are read independently, so either being absent or unreadable
+// must leave the other's rows alone.
+func TestDetailRowsSurviveOneDocumentGoingMissing(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangEnUS)
+
+	for name, tc := range map[string]struct {
+		account *identity.Account
+		prefs   *identity.Preferences
+		want    []string
+	}{
+		"no settings document": {sampleAccount, nil, []string{"sample@example.com", "Sample Org"}},
+		"no state document":    {nil, samplePreferences, []string{"opus", "high"}},
+		"neither":              {nil, nil, nil},
+		// With no name cached the e-mail heads the menu instead, and drops from here.
+		"account without a name": {
+			&identity.Account{Email: "sample@example.com", Organization: "Sample Org"},
+			nil, []string{"Sample Org"},
+		},
+		"account with only a name": {&identity.Account{DisplayName: "Sample"}, nil, nil},
+		"one preference only": {
+			nil, &identity.Preferences{EffortLevel: "medium"}, []string{"medium"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rows := presenter.DetailRows(tc.account, tc.prefs)
+			if len(rows) != len(tc.want) {
+				t.Fatalf("rows = %+v, want %v", rows, tc.want)
+			}
+			// An empty result must be nil, since that is what hides the submenu.
+			if len(tc.want) == 0 && rows != nil {
+				t.Errorf("rows = %+v, want nil", rows)
+			}
+			for i, value := range tc.want {
+				if rows[i].Detail != value {
+					t.Errorf("row %d = %+v, want %q", i, rows[i], value)
+				}
+			}
+		})
+	}
+}
+
+// The platform layer pre-allocates exactly maxDetailRows submenu items and can
+// never add another, so no combination of fields may ask for more.
+func TestDetailRowsNeverExceedThePreAllocatedRows(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangEnUS)
+
+	// Every combination of the five optional fields being present or absent, as the
+	// bits of a counter. The values are distinct per field so that the only row
+	// dropped is the one the header already shows, which is what makes the worst
+	// case here the real worst case.
+	const fieldCount = 5
+	field := func(mask, bit int) string {
+		if mask&(1<<bit) == 0 {
+			return ""
+		}
+		return fmt.Sprintf("value-%d", bit)
+	}
+	widest := 0
+	for mask := 0; mask < 1<<fieldCount; mask++ {
+		account := &identity.Account{
+			DisplayName: field(mask, 0), Email: field(mask, 1), Organization: field(mask, 2),
+		}
+		prefs := &identity.Preferences{Model: field(mask, 3), EffortLevel: field(mask, 4)}
+
+		rows := presenter.DetailRows(account, prefs)
+		if len(rows) > maxDetailRows {
+			t.Fatalf("%+v %+v produced %d rows, over the %d allocated",
+				account, prefs, len(rows), maxDetailRows)
+		}
+		widest = max(widest, len(rows))
+	}
+	// A ceiling nothing reaches is a row allocated at startup and never shown.
+	if widest != maxDetailRows {
+		t.Errorf("the widest combination produced %d rows, but %d are allocated", widest, maxDetailRows)
+	}
+}
+
 func TestDetailRowLabelsAreLocalized(t *testing.T) {
-	account := &identity.Account{DisplayName: "Sample", Email: "sample@example.com", Organization: "Sample Org"}
-	rows := presenterFor(t, i18n.LangPtBR).DetailRows(account)
-	if len(rows) != 2 || rows[1].Label != "Organização" {
-		t.Errorf("pt-BR rows = %+v", rows)
+	rows := presenterFor(t, i18n.LangPtBR).DetailRows(sampleAccount, samplePreferences)
+	for i, want := range []string{"E-mail", "Organização", "Modelo padrão", "Esforço padrão"} {
+		if rows[i].Label != want {
+			t.Errorf("pt-BR row %d = %+v, want the label %q", i, rows[i], want)
+		}
+	}
+}
+
+// The value is configuration the user wrote, and the row exists so it can be
+// compared against the file: altering its case would defeat that.
+func TestDetailRowsShowConfiguredValuesVerbatim(t *testing.T) {
+	prefs := &identity.Preferences{Model: "claude-opus-4-8", EffortLevel: "high"}
+	rows := presenterFor(t, i18n.LangEnUS).DetailRows(nil, prefs)
+	if rows[0].Detail != "claude-opus-4-8" {
+		t.Errorf("model = %q, want it verbatim", rows[0].Detail)
+	}
+}
+
+// A configured value has no gauge: it is not a quantity, and a bar beside it would
+// imply an allowance.
+func TestDetailRowsCarryNoGauge(t *testing.T) {
+	for _, row := range presenterFor(t, i18n.LangEnUS).DetailRows(sampleAccount, samplePreferences) {
+		if row.Bar != "" {
+			t.Errorf("row %+v carries a gauge", row)
+		}
 	}
 }
 

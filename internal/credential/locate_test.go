@@ -1,9 +1,13 @@
+//go:build !windows
+
 package credential
 
-// No build tag: Candidates and Discover exist with the same signature on
-// every platform (see locate_other.go and locate_windows.go), so this file
-// must type-check under `GOOS=windows go vet ./...` even though it only runs
-// on the non-Windows development host.
+// These assertions are about locate_other.go's semantics: $HOME as the only
+// non-configured source, and an unresolvable one as an error. The Windows build
+// answers both differently — %USERPROFILE% plus enumerated distributions, with a
+// failed enumeration degrading rather than erroring — so it has its own file.
+// Running the suite as `GOOS=windows go test -c` under WSL binfmt is what
+// surfaced the mismatch; the untagged version of this file failed there.
 
 import (
 	"context"

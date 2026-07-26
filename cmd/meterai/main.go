@@ -4,6 +4,8 @@
 // It is strictly a reader of credentials the official vendor CLIs already
 // wrote: it never performs an OAuth flow, never refreshes a token, and never
 // writes a credential file back. See package credential for why.
+//go:generate go run ../mkwinres meterai_windows_amd64.syso
+
 package main
 
 import (
@@ -89,7 +91,7 @@ func run() (int, error) {
 		Config:     cfg,
 		Updates:    updates,
 		Controller: poller,
-		Accounts:   accounts,
+		CLI:        accounts,
 		// The tray hands back a whole validated document; only the path stays here.
 		SaveSettings: func(changed config.Config) error { return config.Save(configPath, changed) },
 	}

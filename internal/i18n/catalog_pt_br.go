@@ -16,6 +16,8 @@ var ptBR = &Catalog{
 		AccountName:          "Conta",
 		AccountEmail:         "E-mail",
 		AccountOrganization:  "Organização",
+		PreferredModel:       "Modelo padrão",
+		PreferredEffort:      "Esforço padrão",
 		MenuQuit:             "Sair",
 		RefreshRejected:      "Consulta recente demais — aguarde um instante",
 		MeterResetSuffix:     "· reset em %s",

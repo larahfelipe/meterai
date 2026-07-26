@@ -19,6 +19,8 @@ var enUS = &Catalog{
 		AccountName:          "Account",
 		AccountEmail:         "E-mail",
 		AccountOrganization:  "Organization",
+		PreferredModel:       "Default model",
+		PreferredEffort:      "Default effort",
 		MenuQuit:             "Quit",
 		RefreshRejected:      "Polled too recently — wait a moment",
 		MeterResetSuffix:     "· resets in %s",

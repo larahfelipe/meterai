@@ -124,6 +124,20 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
 compilation from Linux or WSL with no C toolchain. `-H=windowsgui` suppresses
 the console window that would otherwise sit behind the tray icon.
 
+The build is reproducible: the same commit and Go toolchain produce a
+byte-identical executable, so a published hash means something. `-trimpath`
+keeps local paths out, and the version resource linked in from
+`cmd/meterai/meterai_windows_amd64.syso` carries a zero timestamp. That object is
+committed, so no extra step is needed; regenerate it after changing
+`internal/buildinfo` with
+
+```sh
+go generate ./cmd/meterai
+```
+
+and a test in `internal/winres` fails if the committed object and the source
+disagree.
+
 On non-Windows systems the same `main` compiles and runs headless, printing each
 update to stderr. This exists so the full pipeline — credential discovery,
 polling, backoff, formatting — can be exercised on the development host.
@@ -159,8 +173,9 @@ Run `dist\meterAI.exe`. The icon appears in the notification area.
   on the right. The provider takes the position the eye lands on first and the
   plan sits in the value column, so which service and which allowance are read in
   one pass instead of being parsed out of one phrase. The account name is indented
-  under it; the e-mail and organization are a level down, in _Details_, because an
-  address left permanently on screen is read by everyone watching a shared screen.
+  under it; the e-mail, the organization and the model the CLI is configured to
+  prefer are a level down, in _Details_, because an address left permanently on
+  screen is read by everyone watching a shared screen.
 - That right-hand column is a **tab character**, which Windows menus draw flush
   right. Padding with spaces cannot align anything, because the menu font is
   proportional. Because the gauge is a fixed ten cells wide and the whole column
@@ -211,9 +226,27 @@ since each has their own subscription and credential.
 
 ---
 
-## Configuration
+## Files written
 
-A JSON file, created on first run with owner-only permissions:
+Two, and no others. Nothing is written to the registry, to a startup location,
+to a service, to a scheduled task, or anywhere near the credential file.
+
+**`%APPDATA%\meterAI\config.json`** — the settings below, created on first run
+with owner-only permissions and replaced atomically through a temporary file in
+the same directory.
+
+**`%TEMP%\systray_temp_icon_<md5>`** — the tray icon, written by the systray
+library rather than by this app: its API takes the icon as bytes and hands
+Windows a file path, so the bytes have to reach the disk somewhere. Each file is
+a 4,286-byte ICO of the gauge and nothing else, named after its own content hash,
+so a state already drawn is reused rather than rewritten. The gauge quantizes to
+whole rows, which bounds the set at 97 distinct icons — 405 KiB if every one of
+them is ever drawn, in the directory Windows itself clears. Writing them into
+`%APPDATA%` instead would only move the same files somewhere nothing cleans up.
+
+---
+
+## Configuration
 
 ```
 %APPDATA%\meterAI\config.json
@@ -275,11 +308,26 @@ skipped — probing them would boot a VM for nothing.
 
 ### Why UNC rather than `wsl.exe`
 
-Access to the distribution's filesystem uses the `\\wsl.localhost` network path,
-with `wsl.exe` only as a fallback when that fails. Reading over UNC is an order
-of magnitude faster than spawning a subprocess, requires no UTF-16 output
-decoding, and does not depend on `wsl.exe`'s flag format, which has varied
-between versions.
+Everything inside a distribution is reached over the `\\wsl.localhost` network
+path. Reading over UNC is an order of magnitude faster than spawning a
+subprocess, requires no UTF-16 output decoding, and does not depend on
+`wsl.exe`'s flag format, which has varied between versions.
+
+**`wsl.exe -l -q` is the only process this application ever creates**, and it
+exists solely because listing the distributions themselves is not something the
+UNC namespace exposes. The argument list is fixed, nothing user-supplied reaches
+it, and its output is parsed defensively: a name that is not a single path
+component is discarded rather than concatenated into a path.
+
+The home directory inside each distribution is found by listing `\home` over the
+same UNC transport and adding `\root`, rather than by running
+`sh -c 'echo $HOME'` inside the distribution. That earlier approach spent a full
+VM boot to learn one string, and executing a shell interpreter inside another
+operating system is a large amount of machinery for a directory name. Reading the
+filesystem this app already reads costs nothing extra and keeps the process
+surface at one. The trade is that a home directory somewhere other than `/home/*`
+or `/root` is now out of reach; `credentialPath` in the config file is the answer
+for that layout.
 
 ### Stopped distribution
 
@@ -291,13 +339,35 @@ temporary WSL outage does not interrupt monitoring.
 
 ---
 
-## Account details
+## Account details and configured model
 
 The name, e-mail and organization shown in the menu are read from the CLI's own
 state document, `.claude.json`, which sits **beside** the `.claude` directory
 rather than inside it. The CLI fetches its profile once and caches it there, so
 reading that cache costs no request, works offline, and spares this app a second
 undocumented endpoint to depend on.
+
+The **default model** and **default effort** come from a second document,
+`.claude/settings.json`, which sits beside the credential file. Neither figure
+exists remotely: the quota endpoint reports usage windows and spend, and nothing
+else — verified against the live response, which carries no field naming a model
+or an effort level.
+
+Both rows say **default** because that is all the file can support. The CLI
+resolves the effective value per session from a chain this app cannot observe — a
+runtime `/model` choice, an environment variable, a project's own settings file —
+so a session may well be running something else. The value is shown exactly as
+written, without changing its case: the row exists so it can be compared against
+the file it came from. Anything else on offer locally is worse: the state
+document's `lastModelUsage` is recorded per project directory and written when a
+session ends, which makes it "the last model of the last project", not the model
+in use.
+
+That document also holds permission rules, hook commands and an `env` block whose
+values can be credentials for other services. Only the two fields above are
+decoded, and no error path here quotes any part of it. It is re-read on each poll
+rather than cached, because the user can change it at any moment and a held value
+would go on contradicting the file.
 
 The path is derived from the credential file actually in use, never from the
 running user's home directory. That is what guarantees the account on screen and
@@ -346,7 +416,7 @@ internal/provider/      quota.Provider implementations, one per vendor
 internal/poll/          scheduling and backoff
 internal/config/        user settings
 internal/i18n/          every user-visible string, one catalogue per language
-internal/identity/      account details read from the CLI's cached profile
+internal/identity/      account and configured model, read from the CLI's own documents
 internal/tray/          pure formatting (format.go) + platform glue
 internal/trayicon/      icon rendering in ICO format
 ```

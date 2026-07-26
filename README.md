@@ -224,6 +224,30 @@ temporary WSL outage does not interrupt monitoring.
 
 ---
 
+## Account details
+
+The name, e-mail and organization shown in the menu are read from the CLI's own
+state document, `.claude.json`, which sits **beside** the `.claude` directory
+rather than inside it. The CLI fetches its profile once and caches it there, so
+reading that cache costs no request, works offline, and spares this app a second
+undocumented endpoint to depend on.
+
+The path is derived from the credential file actually in use, never from the
+running user's home directory. That is what guarantees the account on screen and
+the quota being polled belong to the same installation — otherwise a credential
+found inside WSL, or pinned through `credentialPath`, would be reported under
+whichever account happened to be signed in on the Windows side.
+
+This document is read-only to meterAI, exactly like the credential file. It is
+also the CLI's private bookkeeping: it carries a schema version the CLI has
+already migrated repeatedly, so every field is optional, the read is size-bounded,
+and any failure — absent, unparseable, or simply not signed in — hides the
+account rows instead of affecting polling. Account values never appear in an
+error message or on a log line; a decoding failure reports its structural cause
+only, because the document also holds the user's project paths.
+
+---
+
 ## Cadence and recovery
 
 | Situation | Next poll |
@@ -255,6 +279,7 @@ internal/provider/      quota.Provider implementations, one per vendor
 internal/poll/          scheduling and backoff
 internal/config/        user settings
 internal/i18n/          every user-visible string, one catalogue per language
+internal/identity/      account details read from the CLI's cached profile
 internal/tray/          pure formatting (format.go) + platform glue
 internal/trayicon/      icon rendering in ICO format
 ```

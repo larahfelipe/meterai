@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/larahfelipe/meterai/internal/config"
 	"github.com/larahfelipe/meterai/internal/i18n"
@@ -63,8 +64,9 @@ func TestRenderBeforeTheFirstPollWritesOnlyTheStatusLine(t *testing.T) {
 // stubController and stubAccounts stand in for the poller and the identity cache.
 type stubController struct{ state poll.State }
 
-func (s stubController) State() poll.State { return s.state }
-func (stubController) Refresh() bool       { return true }
+func (s stubController) State() poll.State       { return s.state }
+func (stubController) Refresh() bool             { return true }
+func (stubController) SetInterval(time.Duration) {}
 
 type stubAccounts struct {
 	account *identity.Account
@@ -79,8 +81,12 @@ func TestRunRendersOnceAndUnwindsWithTheContext(t *testing.T) {
 
 	var out bytes.Buffer
 	cfg := config.Default()
-	err := run(ctx, &out, cfg, make(chan struct{}), stubController{state: liveState()},
-		stubAccounts{account: &identity.Account{DisplayName: "Sample"}})
+	err := run(ctx, &out, Wiring{
+		Config:     cfg,
+		Updates:    make(chan struct{}),
+		Controller: stubController{state: liveState()},
+		Accounts:   stubAccounts{account: &identity.Account{DisplayName: "Sample"}},
+	})
 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("run() = %v, want context.Canceled", err)
@@ -97,8 +103,12 @@ func TestRunReportsAnUnreadableAccountWithoutStopping(t *testing.T) {
 	cancel()
 
 	var out bytes.Buffer
-	err := run(ctx, &out, config.Default(), make(chan struct{}), stubController{state: liveState()},
-		stubAccounts{err: errors.New("state document is unreadable")})
+	err := run(ctx, &out, Wiring{
+		Config:     config.Default(),
+		Updates:    make(chan struct{}),
+		Controller: stubController{state: liveState()},
+		Accounts:   stubAccounts{err: errors.New("state document is unreadable")},
+	})
 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("run() = %v, want context.Canceled", err)

@@ -29,6 +29,23 @@ const (
 
 func (l Lang) String() string { return string(l) }
 
+// nativeNames are endonyms: a language is offered in its own words, so a user
+// who cannot read the current interface can still find theirs. They are not
+// catalogue entries because they are identical in every catalogue.
+var nativeNames = map[Lang]string{
+	LangEnUS: "English (US)",
+	LangPtBR: "Português (BR)",
+}
+
+// NativeName is how this language names itself. It falls back to the tag, which
+// is still recognizable, rather than to an empty menu entry.
+func (l Lang) NativeName() string {
+	if name, ok := nativeNames[l]; ok {
+		return name
+	}
+	return string(l)
+}
+
 // DefaultLang is the language used when the config file carries none.
 const DefaultLang = LangEnUS
 
@@ -74,6 +91,15 @@ const (
 	MenuRefreshTooltip
 	MenuDetails
 	MenuDetailsTooltip
+	MenuSettings
+	MenuSettingsTooltip
+	MenuInterval
+	MenuIntervalTooltip
+	MenuLanguage
+	MenuLanguageTooltip
+	IntervalMinutes
+	IntervalHours
+	SettingsSaveFailed
 	AccountEmail
 	AccountOrganization
 	MenuQuit
@@ -106,6 +132,15 @@ var keyNames = [keyCount]string{
 	MenuRefreshTooltip:   "MenuRefreshTooltip",
 	MenuDetails:          "MenuDetails",
 	MenuDetailsTooltip:   "MenuDetailsTooltip",
+	MenuSettings:         "MenuSettings",
+	MenuSettingsTooltip:  "MenuSettingsTooltip",
+	MenuInterval:         "MenuInterval",
+	MenuIntervalTooltip:  "MenuIntervalTooltip",
+	MenuLanguage:         "MenuLanguage",
+	MenuLanguageTooltip:  "MenuLanguageTooltip",
+	IntervalMinutes:      "IntervalMinutes",
+	IntervalHours:        "IntervalHours",
+	SettingsSaveFailed:   "SettingsSaveFailed",
 	AccountEmail:         "AccountEmail",
 	AccountOrganization:  "AccountOrganization",
 	MenuQuit:             "MenuQuit",

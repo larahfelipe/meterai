@@ -69,9 +69,17 @@ wrong instruction.
 `credential.FailureKind` is a parallel taxonomy: `Absent`/`Unreadable` mean "try the next candidate"
 (`credential.IsAbsent`), the rest mean "stop and tell the user".
 
-**The 300s poll floor is asserted in two places that behave differently:** `poll.New` silently raises
-a faster interval (callers may go slower, never faster), while `config.Validate` rejects one with a
-message. Change both or neither.
+**The 300s poll floor is asserted in three places that behave differently:** `poll.New` and
+`poll.Poller.SetInterval` silently raise a faster interval (callers may go slower, never faster),
+while `config.Validate` rejects one with a message. Change all or none. `tray.IntervalPresets` never
+offers a cadence below it, and a test asserts every preset survives `config.Validate`.
+
+**A settings change is persisted before it is applied.** The tray derives a whole document through
+`tray.WithInterval`/`WithLanguage`, which validate the entire config rather than the field, then
+persists it through the `Wiring.SaveSettings` function — the tray never learns the config path. Only
+after the write succeeds does the change reach the poller and the presenter, so the menu can never
+show a state that is not on disk. A new cadence governs the delay computed after the next poll; a
+timer already waiting is never cut short.
 
 **`quota.MeterID` (`<vendor>:<kind>`) and `anthropic.VendorKey` are persisted keys** — stable across
 releases even if the vendor renames its own field.

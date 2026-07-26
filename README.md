@@ -139,11 +139,28 @@ Run `dist\meterAI.exe`. The icon appears in the notification area.
   cells per meter would push the status line out of it.
 - **Clicking** opens a menu headed by the account and plan being monitored, then
   a gauge per meter, a *Details* submenu carrying the account's e-mail and
-  organization, and finally *Refresh now* and *Quit*. A meter with no stated allowance, such as
-  an uncapped balance, shows no gauge rather than an empty one.
+  organization, a *Settings* submenu, and finally *Refresh now* and *Quit*. A
+  meter with no stated allowance, such as an uncapped balance, shows no gauge
+  rather than an empty one.
+- **Settings** changes the update cadence and the interface language without a
+  restart. Each change is written to the config file first and only then applied,
+  so the menu never shows a setting that is not on disk; if the write fails, the
+  status line says so and nothing changes. A new cadence takes effect after the
+  next poll — a wait already in progress is never shortened, since that would be
+  a way around the polling floor.
 - The **icon colour** follows severity: green, amber, red.
 - The icon turns **grey** when the displayed figures are no longer being
   confirmed; the menu states how old they are.
+
+### Starting with Windows
+
+meterAI does not install itself anywhere. It writes no registry key, no startup
+entry, no service and no scheduled task, and it never will without being asked:
+the only thing it creates is its own config file under `%APPDATA%\meterAI`.
+
+To have it start with the session, use the mechanism Windows already provides —
+press `Win+R`, run `shell:startup`, and drop a shortcut to `meterAI.exe` in the
+folder that opens. Removing the shortcut undoes it, with nothing left behind.
 
 Only one instance runs per Windows logon session, enforced by a named kernel
 mutex. A second copy exits quietly with exit code `3`. The scope is per session,
@@ -177,6 +194,10 @@ A JSON file, created on first run with owner-only permissions:
 | `warnAtPercent` | Local warning threshold. |
 | `criticalAtPercent` | Local critical threshold. Must be greater than or equal to `warnAtPercent`. |
 | `language` | Interface language: `en-US` (default) or `pt-BR`. Empty selects the default; an unsupported tag is rejected with the list of accepted ones. |
+
+`pollInterval` and `language` are also editable from the *Settings* submenu,
+which writes this same file. The menu offers only cadences at or above the floor,
+so a choice made there can always be saved.
 
 A populated `credentialPath` is **authoritative**: if that path fails, the app
 reports an error rather than looking elsewhere. Falling through to another

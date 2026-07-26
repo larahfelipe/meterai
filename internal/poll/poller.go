@@ -53,13 +53,12 @@ type State struct {
 // the UI must disclose so an outdated percentage is never read as current.
 func (s State) IsStale() bool { return s.LastError != nil && s.Snapshot != nil }
 
-// Poller polls one provider. Exactly one goroutine may call Run; State and
-// Refresh are safe to call concurrently from any goroutine.
+// Poller polls one provider. Exactly one goroutine may call Run; State,
+// Refresh and SetInterval are safe to call concurrently from any goroutine.
 //
-// INV: mu guards state and lastPollAt.
+// INV: mu guards state, lastPollAt and interval.
 type Poller struct {
 	provider quota.Provider
-	interval time.Duration
 
 	// now and after are injected so scheduling is deterministic under test.
 	now   func() time.Time
@@ -71,6 +70,7 @@ type Poller struct {
 	mu         sync.RWMutex
 	state      State
 	lastPollAt time.Time
+	interval   time.Duration
 
 	// refresh has capacity 1 so a burst of manual requests coalesces into one
 	// poll instead of queueing.
@@ -83,20 +83,44 @@ func discardState(State) {}
 // callers may configure a slower cadence, never a faster one. onUpdate may be
 // nil, in which case the state is still available through State.
 func New(provider quota.Provider, interval time.Duration, onUpdate func(State)) *Poller {
-	if interval < DefaultInterval {
-		interval = DefaultInterval
-	}
 	if onUpdate == nil {
 		onUpdate = discardState
 	}
 	return &Poller{
 		provider: provider,
-		interval: interval,
+		interval: clampInterval(interval),
 		now:      time.Now,
 		after:    time.After,
 		onUpdate: onUpdate,
 		refresh:  make(chan struct{}, 1),
 	}
+}
+
+// clampInterval enforces the floor for every entry point that sets a cadence.
+// The floor is silently applied rather than reported: a caller asking to poll
+// faster gets the safe cadence, since the alternative is refusing to run.
+func clampInterval(interval time.Duration) time.Duration {
+	if interval < DefaultInterval {
+		return DefaultInterval
+	}
+	return interval
+}
+
+// SetInterval changes the steady-state cadence of a running poller. The new
+// value governs the delay computed after the next poll: a timer already waiting
+// is not cut short, so a change cannot be used to poll sooner than the floor
+// allows.
+func (p *Poller) SetInterval(interval time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.interval = clampInterval(interval)
+}
+
+// Interval reports the cadence in force.
+func (p *Poller) Interval() time.Duration {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.interval
 }
 
 func (p *Poller) State() State {

@@ -341,3 +341,67 @@ func TestStateIsSafeUnderConcurrentReaders(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestSetIntervalGovernsTheDelayAfterTheNextPoll(t *testing.T) {
+	provider := &scriptedProvider{script: []result{{snapshot: okSnapshot(10)}}}
+	poller, h, _ := newHarness(t, provider, 10*time.Minute)
+
+	if _, delay := h.nextCycle(t); delay != 10*time.Minute {
+		t.Fatalf("first delay = %v, want the configured cadence", delay)
+	}
+
+	poller.SetInterval(20 * time.Minute)
+	if got := poller.Interval(); got != 20*time.Minute {
+		t.Fatalf("Interval() = %v, want the new cadence", got)
+	}
+
+	// The waiting timer is not cut short; the new cadence governs the delay
+	// computed after the poll that timer releases.
+	h.tick <- time.Time{}
+	if _, delay := h.nextCycle(t); delay != 20*time.Minute {
+		t.Errorf("delay after the change = %v, want 20m", delay)
+	}
+}
+
+func TestSetIntervalEnforcesTheSameFloorAsNew(t *testing.T) {
+	// The floor protects an undocumented endpoint; a settings change is not a way
+	// around it.
+	provider := &scriptedProvider{script: []result{{snapshot: okSnapshot(10)}}}
+	poller, _, _ := newHarness(t, provider, time.Hour)
+
+	for _, tooFast := range []time.Duration{0, -time.Minute, time.Second, DefaultInterval - time.Nanosecond} {
+		poller.SetInterval(tooFast)
+		if got := poller.Interval(); got != DefaultInterval {
+			t.Errorf("SetInterval(%v) left the cadence at %v, want the %v floor", tooFast, got, DefaultInterval)
+		}
+	}
+	poller.SetInterval(DefaultInterval)
+	if got := poller.Interval(); got != DefaultInterval {
+		t.Errorf("SetInterval at exactly the floor = %v", got)
+	}
+}
+
+func TestSetIntervalIsSafeAlongsideARunningPoller(t *testing.T) {
+	provider := &scriptedProvider{script: []result{{snapshot: okSnapshot(10)}}}
+	poller, h, _ := newHarness(t, provider, DefaultInterval)
+	h.nextCycle(t)
+
+	// The UI goroutine changes the cadence while the poller reads it.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for worker := 0; worker < 2; worker++ {
+		go func(worker int) {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				poller.SetInterval(time.Duration(10+worker) * time.Minute)
+				_ = poller.Interval()
+				_ = poller.State()
+			}
+		}(worker)
+	}
+	for i := 0; i < 3; i++ {
+		h.tick <- time.Time{}
+		h.nextCycle(t)
+	}
+	wg.Wait()
+}

@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/larahfelipe/meterai/internal/config"
 	"github.com/larahfelipe/meterai/internal/identity"
 )
 
@@ -18,29 +17,31 @@ import (
 // The shipping target is Windows; this exists so the full pipeline —
 // credential discovery, polling, backoff, formatting — can be exercised on the
 // Linux development host, which is also where the credentials actually live.
-func Run(ctx context.Context, cfg config.Config, updates <-chan struct{}, controller Controller, accounts AccountReader) error {
-	return run(ctx, os.Stderr, cfg, updates, controller, accounts)
+func Run(ctx context.Context, wiring Wiring) error {
+	return run(ctx, os.Stderr, wiring)
 }
 
 // run takes its destination as a parameter so the loop can be exercised without
-// capturing the process's stderr.
-func run(ctx context.Context, w io.Writer, cfg config.Config, updates <-chan struct{}, controller Controller, accounts AccountReader) error {
-	presenter := NewPresenter(cfg)
+// capturing the process's stderr. There is no interactive menu here, so the
+// settings entry points of Wiring go unused: this path exists to exercise the
+// pipeline, not to configure it.
+func run(ctx context.Context, w io.Writer, wiring Wiring) error {
+	presenter := NewPresenter(wiring.Config)
 	renderNow := func() {
 		// Unlike the tray, the development host reports why an account could not
 		// be read: it is the only place that failure is diagnosable.
-		account, err := accounts.Account()
+		account, err := wiring.Accounts.Account()
 		if err != nil {
 			fmt.Fprintf(w, "meterAI: account details unavailable: %v\n", err)
 		}
-		render(w, presenter, controller.State(), account, time.Now())
+		render(w, presenter, wiring.Controller.State(), account, time.Now())
 	}
 	renderNow()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-updates:
+		case <-wiring.Updates:
 			renderNow()
 		}
 	}

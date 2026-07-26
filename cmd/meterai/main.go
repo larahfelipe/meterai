@@ -85,7 +85,15 @@ func run() (int, error) {
 	go poller.Run(ctx)
 
 	// tray.Run blocks and, on Windows, must own the main goroutine.
-	if err := tray.Run(ctx, cfg, updates, poller, accounts); err != nil && !errors.Is(err, context.Canceled) {
+	wiring := tray.Wiring{
+		Config:     cfg,
+		Updates:    updates,
+		Controller: poller,
+		Accounts:   accounts,
+		// The tray hands back a whole validated document; only the path stays here.
+		SaveSettings: func(changed config.Config) error { return config.Save(configPath, changed) },
+	}
+	if err := tray.Run(ctx, wiring); err != nil && !errors.Is(err, context.Canceled) {
 		return 1, err
 	}
 	return 0, nil

@@ -51,6 +51,26 @@ type PollState = poll.State
 type Controller interface {
 	State() poll.State
 	Refresh() bool
+	// SetInterval applies a cadence chosen in the settings menu. The poller
+	// enforces its own floor, so the UI cannot configure a faster one.
+	SetInterval(interval time.Duration)
+}
+
+// Wiring is everything the tray needs from the rest of the app. It is a struct
+// because the platform entry point takes all of it and would otherwise be a
+// six-argument call whose order carries no meaning.
+type Wiring struct {
+	Config config.Config
+	// Updates signals that the poller published a new state. It is a signal, not
+	// a queue: the UI re-reads Controller.State(), so a coalesced send cannot
+	// leave a stale reading on screen.
+	Updates    <-chan struct{}
+	Controller Controller
+	Accounts   AccountReader
+	// SaveSettings persists a changed document. It is a function so the tray
+	// never learns where the config file lives, and a failure to write leaves the
+	// running configuration untouched.
+	SaveSettings func(config.Config) error
 }
 
 // AccountReader reports the account being monitored. It is consulted on every

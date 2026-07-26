@@ -265,3 +265,23 @@ func itoa(v uint8) string {
 	}
 	return string(digits)
 }
+
+func TestNativeNameOffersEveryLanguageInItsOwnWords(t *testing.T) {
+	// A user who cannot read the current interface finds their language by its
+	// endonym, so every catalogue must have one and they must be distinct.
+	seen := make(map[string]Lang, len(Available()))
+	for _, lang := range Available() {
+		name := lang.NativeName()
+		if strings.TrimSpace(name) == "" {
+			t.Errorf("%s has no native name", lang)
+		}
+		if other, duplicated := seen[name]; duplicated {
+			t.Errorf("%s and %s share the native name %q", lang, other, name)
+		}
+		seen[name] = lang
+	}
+	// An unknown tag stays recognizable rather than rendering blank.
+	if got := Lang("de-DE").NativeName(); got != "de-DE" {
+		t.Errorf("NativeName() for an unlisted tag = %q, want the tag", got)
+	}
+}

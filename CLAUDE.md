@@ -96,7 +96,8 @@ field as optional — these endpoints are undocumented, so an unrecognizable doc
 
 ## Conventions
 
-- User-visible strings are Brazilian Portuguese (menu items, status lines, `anthropic.windowLabels`).
+- Every user-visible string resolves through `internal/i18n`. `en-US` is the default catalogue and
+  `pt-BR` is opt-in through the config file; a string literal reaching the UI directly is a defect.
   Code, comments and identifiers are English.
 - Comments carry invariants, security assumptions and non-obvious reasoning only. Match the existing
   density; no mechanical comments, no transitory notes.
@@ -105,3 +106,35 @@ field as optional — these endpoints are undocumented, so an unrecognizable doc
 - Live tests are gated on `testing.Short()` (`live_e2e_test.go`, `smoke_test.go`). Schema drift is
   otherwise caught by the `internal/provider/anthropic` fixture, which reproduces the real response
   including its null internal-codename keys.
+- No comment references a planning document or any other file that is expected to disappear.
+
+## Engineering
+
+Simplicity, readability and maintainability outrank cleverness. An abstraction earns its place by
+having two concrete call sites or by being an interface at a layer boundary — nothing else. Keep
+coupling low in the direction the layering already establishes: a package that acquires knowledge of
+a vendor, of WSL, of Windows, or of a file format outside its own responsibility has been designed
+wrong. New behaviour should slot into the existing seams (`quota.Provider`, `CredentialSource`,
+injected clocks, the pure/glue split) rather than require them to be reshaped.
+
+## Security
+
+The credential invariants above are the floor, not the whole rule.
+
+- No secret, token, path-derived identifier or account detail reaches a log line, an error message,
+  a temporary file, or a command line — not even truncated.
+- Every external input surface states where it is validated and what it does on rejection. Bound
+  every read from a file or socket; an undocumented producer can always grow its output.
+- **Never make a permanent change to the user's environment without explicit prior approval:**
+  registry keys, startup entries, services, scheduled tasks, shortcuts, files outside this app's own
+  config directory. When a feature needs one, stop, explain why, list the alternatives, and wait.
+- Every file the app creates — config, cache, state — has a single documented purpose and is
+  described in README.md. Nothing is written that no feature reads.
+
+## Testing
+
+Every behaviour ships with tests covering, where they apply: the happy path, boundaries (empty,
+single, maximum, off-by-one), error handling, invalid input, regressions for defects already fixed,
+and the cases that would corrupt state or leak data. Tests are deterministic, order-independent, and
+share no mutable state; clocks, filesystem, and network are injected or stubbed. Assert observable
+behaviour, never an implementation detail.

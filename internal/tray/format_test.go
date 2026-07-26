@@ -59,21 +59,125 @@ func TestRowsRenderMetersInProviderOrder(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
-	if rows[0].Label != "Sessão (5h)" || rows[0].Detail != "23% · reset em 2h54" {
+	if rows[0].Label != "Sessão (5h) · reset em 2h54" || rows[0].Detail != "23%" {
 		t.Errorf("row 0 = %+v", rows[0])
 	}
-	if rows[1].Label != "Semanal (7d)" || rows[1].Detail != "74% · reset em 1d01h" {
+	if rows[1].Label != "Semanal (7d) · reset em 1d01h" || rows[1].Detail != "74%" {
 		t.Errorf("row 1 = %+v", rows[1])
 	}
 }
 
 func TestRowsRenderInTheDefaultLanguage(t *testing.T) {
 	rows := presenterFor(t, i18n.LangEnUS).Rows(liveState(), now)
-	if rows[0].Label != "Session (5h)" || rows[0].Detail != "23% · resets in 2h54" {
+	if rows[0].Label != "Session (5h) · resets in 2h54" || rows[0].Detail != "23%" {
 		t.Errorf("row 0 = %+v", rows[0])
 	}
-	if rows[1].Label != "Weekly (7d)" || rows[1].Detail != "74% · resets in 1d01h" {
+	if rows[1].Label != "Weekly (7d) · resets in 1d01h" || rows[1].Detail != "74%" {
 		t.Errorf("row 1 = %+v", rows[1])
+	}
+}
+
+// The figure is the one field that changes between polls, so it is the only one
+// that shares the right column with the gauge: a countdown or a window name there
+// would move the number the row exists to show.
+func TestRowsKeepTheFigureAloneInTheValueColumn(t *testing.T) {
+	for _, lang := range i18n.Available() {
+		for _, row := range presenterFor(t, lang).Rows(liveState(), now) {
+			if row.Detail == "" || strings.ContainsAny(row.Detail, "·") {
+				t.Errorf("%s: value column = %q, want the figure alone", lang, row.Detail)
+			}
+			if !strings.Contains(row.Label, "·") {
+				t.Errorf("%s: label = %q, want the reset countdown beside the name", lang, row.Label)
+			}
+		}
+	}
+}
+
+// Anthropic reports every weekly window with one reset instant, so the countdown
+// is stated by the first row of the group and the rest read as belonging to it.
+func TestRowsStateOneResetInstantOnce(t *testing.T) {
+	weekly := now.Add(4*24*time.Hour + 6*time.Hour)
+	state := poll.State{Snapshot: &quota.Snapshot{Meters: []quota.Meter{
+		&quota.Utilization{MeterID: "anthropic:session", Name: "session", Percent: 47,
+			Reset: now.Add(2*time.Hour + 13*time.Minute)},
+		&quota.Utilization{MeterID: "anthropic:weekly_all", Name: "weekly_all", Percent: 74, Reset: weekly},
+		&quota.Utilization{MeterID: "anthropic:weekly_opus", Name: "weekly_opus", Percent: 4, Reset: weekly},
+		&quota.Utilization{MeterID: "anthropic:weekly_sonnet", Name: "weekly_sonnet", Percent: 12, Reset: weekly},
+	}}}
+
+	rows := presenterFor(t, i18n.LangEnUS).Rows(state, now)
+	for _, want := range []string{
+		"Session (5h) · resets in 2h13",
+		"Weekly (7d) · resets in 4d06h",
+		"Weekly Opus (7d)",
+		"Weekly Sonnet (7d)",
+	} {
+		if got := rows[0].Label; got != want {
+			t.Errorf("label = %q, want %q", got, want)
+		}
+		rows = rows[1:]
+	}
+
+	// Every figure survives the suppression: it is the countdown that is shared,
+	// never the reading.
+	for _, row := range presenterFor(t, i18n.LangEnUS).Rows(state, now) {
+		if row.Detail == "" {
+			t.Errorf("row %q lost its figure", row.Label)
+		}
+	}
+}
+
+// Suppression follows the rows the user reads, not the set of instants in the
+// document: a window that resets at the same time as one further up, with another
+// window between them, has to say so.
+func TestRowsRepeatAResetThatIsNotConsecutive(t *testing.T) {
+	shared := now.Add(3 * time.Hour)
+	state := poll.State{Snapshot: &quota.Snapshot{Meters: []quota.Meter{
+		&quota.Utilization{MeterID: "a:first", Name: "first", Percent: 1, Reset: shared},
+		&quota.Utilization{MeterID: "a:middle", Name: "middle", Percent: 2, Reset: now.Add(time.Hour)},
+		&quota.Utilization{MeterID: "a:last", Name: "last", Percent: 3, Reset: shared},
+	}}}
+
+	for i, row := range presenterFor(t, i18n.LangEnUS).Rows(state, now) {
+		if !strings.Contains(row.Label, "resets in") {
+			t.Errorf("row %d = %q, want its own countdown", i, row.Label)
+		}
+	}
+}
+
+// A meter with no reset instant at all must neither state one nor let the next row
+// inherit its silence.
+func TestRowsAroundAMeterThatNeverResets(t *testing.T) {
+	shared := now.Add(3 * time.Hour)
+	state := poll.State{Snapshot: &quota.Snapshot{Meters: []quota.Meter{
+		&quota.Utilization{MeterID: "a:windowed", Name: "windowed", Percent: 1, Reset: shared},
+		&quota.Balance{MeterID: "a:credits", Name: "credits",
+			Used: quota.Money{AmountMinor: 750, Currency: "USD", Exponent: 2}},
+		&quota.Utilization{MeterID: "a:again", Name: "again", Percent: 3, Reset: shared},
+	}}}
+
+	rows := presenterFor(t, i18n.LangEnUS).Rows(state, now)
+	if !strings.Contains(rows[0].Label, "resets in") {
+		t.Errorf("row 0 = %q", rows[0].Label)
+	}
+	if rows[1].Label != "credits" {
+		t.Errorf("row 1 = %q, want no countdown at all", rows[1].Label)
+	}
+	if !strings.Contains(rows[2].Label, "resets in") {
+		t.Errorf("row 2 = %q, want its own countdown after a meter that has none", rows[2].Label)
+	}
+}
+
+// A meter the vendor never resets, such as a continuously drawn balance, must not
+// grow a dangling separator where its countdown would be.
+func TestRowsOmitTheResetOfAMeterThatHasNone(t *testing.T) {
+	state := poll.State{Snapshot: &quota.Snapshot{Meters: []quota.Meter{
+		&quota.Balance{MeterID: "openrouter:credits", Name: "credits",
+			Used: quota.Money{AmountMinor: 750, Currency: "USD", Exponent: 2}},
+	}}}
+	row := presenterFor(t, i18n.LangEnUS).Rows(state, now)[0]
+	if row.Label != "credits" {
+		t.Errorf("label = %q, want the bare name", row.Label)
 	}
 }
 
@@ -216,7 +320,7 @@ func TestTooltipFitsThePlatformLimit(t *testing.T) {
 	if lines := strings.Split(tooltip, "\n"); len(lines) != 3 {
 		t.Errorf("tooltip = %q, want two meter lines plus a status line", tooltip)
 	}
-	if !strings.Contains(tooltip, "Sessão (5h)  23%") {
+	if !strings.Contains(tooltip, "Sessão (5h) · reset em 2h54  23%") {
 		t.Errorf("tooltip = %q", tooltip)
 	}
 
@@ -327,46 +431,46 @@ func TestIconStateMarksStaleOnFailure(t *testing.T) {
 	}
 }
 
-func TestHeaderTextNamesTheProviderAndPlan(t *testing.T) {
+func TestHeaderRowNamesTheProviderAndPlan(t *testing.T) {
 	presenter := presenterFor(t, i18n.LangEnUS)
 	for name, tc := range map[string]struct {
 		state poll.State
-		want  string
+		want  Row
 	}{
-		"product and plan":      {liveState(), "Claude Pro"},
-		"nothing before a poll": {poll.State{}, ""},
-		"product without a plan": {
-			poll.State{Snapshot: &quota.Snapshot{Vendor: "anthropic", Product: "Claude"}}, "Claude",
+		// The provider takes the position read first; the plan sits in the value
+		// column every other row uses.
+		"provider and plan": {liveState(), Row{Label: "Anthropic", Detail: "Claude Pro"}},
+		// systray can hide an item but not a separator, so the heading is never
+		// empty: before a provider has been reached it names the app.
+		"the app before a poll": {poll.State{}, Row{Label: AppName}},
+		"provider without a plan": {
+			poll.State{Snapshot: &quota.Snapshot{Vendor: "anthropic", Product: "Claude"}},
+			Row{Label: "Anthropic", Detail: "Claude"},
 		},
-		// A provider that states no product name falls back to its key, which is
-		// still recognizable, rather than heading the menu with a bare plan.
-		"vendor stands in for a missing product": {
-			poll.State{Snapshot: &quota.Snapshot{Vendor: "openrouter", Plan: "team"}}, "Openrouter Team",
+		"provider naming no product": {
+			poll.State{Snapshot: &quota.Snapshot{Vendor: "openrouter", Plan: "team"}},
+			Row{Label: "Openrouter", Detail: "Team"},
 		},
-		"plan without either":     {poll.State{Snapshot: &quota.Snapshot{Plan: "max"}}, "Max"},
-		"snapshot naming neither": {poll.State{Snapshot: &quota.Snapshot{}}, ""},
+		// A provider that states no vendor key is still named by its product rather
+		// than repeating it on both sides of the row.
+		"product stands in for a missing vendor": {
+			poll.State{Snapshot: &quota.Snapshot{Product: "Claude", Plan: "pro"}},
+			Row{Label: "Claude", Detail: "Pro"},
+		},
+		// A plan alone heads the menu on the left: right-aligned, it would float in
+		// the value column with nothing to qualify.
+		"plan without either":     {poll.State{Snapshot: &quota.Snapshot{Plan: "max"}}, Row{Label: "Max"}},
+		"snapshot naming neither": {poll.State{Snapshot: &quota.Snapshot{}}, Row{Label: AppName}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := presenter.HeaderText(tc.state); got != tc.want {
-				t.Errorf("HeaderText() = %q, want %q", got, tc.want)
+			if got := presenter.HeaderRow(tc.state); got != tc.want {
+				t.Errorf("HeaderRow() = %+v, want %+v", got, tc.want)
 			}
 		})
 	}
 }
 
-// Who the account belongs to belongs one level down: the header answers which
-// service and which allowance, not which person.
-func TestHeaderTextCarriesNoAccountDetail(t *testing.T) {
-	presenter := presenterFor(t, i18n.LangEnUS)
-	header := presenter.HeaderText(liveState())
-	for _, unwanted := range []string{"Sample", "sample@example.com", "Sample Org"} {
-		if strings.Contains(header, unwanted) {
-			t.Errorf("header %q carries account detail %q", header, unwanted)
-		}
-	}
-}
-
-func TestHeaderTextCapitalizesOnlyTheFirstRune(t *testing.T) {
+func TestHeaderRowCapitalizesOnlyTheFirstRune(t *testing.T) {
 	presenter := presenterFor(t, i18n.LangEnUS)
 	for plan, want := range map[string]string{
 		"max":       "Claude Max",
@@ -378,47 +482,98 @@ func TestHeaderTextCapitalizesOnlyTheFirstRune(t *testing.T) {
 		"enterPris": "Claude EnterPris",
 	} {
 		state := poll.State{Snapshot: &quota.Snapshot{Vendor: "anthropic", Product: "Claude", Plan: plan}}
-		if got := presenter.HeaderText(state); got != want {
-			t.Errorf("HeaderText() for plan %q = %q, want %q", plan, got, want)
+		if got := presenter.HeaderRow(state); got.Detail != want {
+			t.Errorf("HeaderRow() for plan %q = %q, want %q", plan, got.Detail, want)
 		}
 	}
 }
 
-func TestDetailRowsOmitFieldsTheVendorDidNotSupply(t *testing.T) {
+func TestAccountRowShowsWhoTheSubscriptionBelongsTo(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangEnUS)
+	full := &identity.Account{DisplayName: "Sample", Email: "sample@example.com", Organization: "Sample Org"}
+
+	row := presenter.AccountRow(full)
+	if row.Label != menuContinuationIndent+"Sample" {
+		t.Errorf("account row = %q, want the indented display name", row.Label)
+	}
+	// It is a heading, not a reading: nothing belongs in its value column.
+	if row.Detail != "" || row.Bar != "" {
+		t.Errorf("account row = %+v, want no value", row)
+	}
+	// An address left permanently on screen is read by everyone watching a shared
+	// screen, so it stays one level down while a name is available.
+	if strings.Contains(row.Label, "@") {
+		t.Errorf("account row = %q, want no e-mail at the first level", row.Label)
+	}
+
+	// An account the CLI cached without a name is still identified.
+	nameless := presenter.AccountRow(&identity.Account{Email: "sample@example.com"})
+	if nameless.Label != menuContinuationIndent+"sample@example.com" {
+		t.Errorf("nameless account row = %q", nameless.Label)
+	}
+
+	for name, account := range map[string]*identity.Account{
+		"unknown account":   nil,
+		"empty document":    {},
+		"organization only": {Organization: "Sample Org"},
+	} {
+		if row := presenter.AccountRow(account); row != (Row{}) {
+			t.Errorf("%s: account row = %+v, want none", name, row)
+		}
+	}
+}
+
+func TestDetailRowsOmitFieldsTheDocumentDidNotSupply(t *testing.T) {
 	presenter := presenterFor(t, i18n.LangEnUS)
 
 	full := presenter.DetailRows(&identity.Account{
 		DisplayName: "Sample", Email: "sample@example.com", Organization: "Sample Org",
 	})
-	if len(full) != 3 {
-		t.Fatalf("rows = %d, want the account name, e-mail and organization", len(full))
+	// The display name heads the menu, so repeating it here would show one value
+	// twice in two levels of the same menu.
+	if len(full) != 2 {
+		t.Fatalf("rows = %+v, want the e-mail and the organization", full)
 	}
-	if full[0].Label != "Account" || full[0].Detail != "Sample" {
+	if full[0].Label != "E-mail" || full[0].Detail != "sample@example.com" {
 		t.Errorf("row 0 = %+v", full[0])
 	}
-	if full[1].Label != "E-mail" || full[1].Detail != "sample@example.com" {
+	if full[1].Label != "Organization" || full[1].Detail != "Sample Org" {
 		t.Errorf("row 1 = %+v", full[1])
 	}
-	if full[2].Label != "Organization" || full[2].Detail != "Sample Org" {
-		t.Errorf("row 2 = %+v", full[2])
+
+	// With no name cached the e-mail heads the menu instead, and drops from here.
+	nameless := presenter.DetailRows(&identity.Account{Email: "sample@example.com", Organization: "Sample Org"})
+	if len(nameless) != 1 || nameless[0].Detail != "Sample Org" {
+		t.Errorf("rows = %+v, want the organization alone", nameless)
 	}
 
-	// A personal account has no organization; one with only a display name still
-	// has a row now that the name lives here.
-	personal := presenter.DetailRows(&identity.Account{Email: "sample@example.com"})
-	if len(personal) != 1 || personal[0].Detail != "sample@example.com" {
-		t.Errorf("personal rows = %+v", personal)
-	}
-	if rows := presenter.DetailRows(&identity.Account{DisplayName: "Sample"}); len(rows) != 1 {
-		t.Errorf("rows = %+v, want the account name", rows)
+	if rows := presenter.DetailRows(&identity.Account{DisplayName: "Sample"}); len(rows) != 0 {
+		t.Errorf("rows = %+v, want none: the name is already in the header", rows)
 	}
 	if rows := presenter.DetailRows(nil); rows != nil {
 		t.Errorf("rows = %+v, want nil while the account is unknown", rows)
 	}
 }
 
+// The platform layer pre-allocates exactly maxAccountRows submenu items and can
+// never add another, so no combination of fields may ask for more.
+func TestDetailRowsNeverExceedThePreAllocatedRows(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangEnUS)
+	values := []string{"", "Sample"}
+	for _, name := range values {
+		for _, email := range values {
+			for _, org := range values {
+				account := &identity.Account{DisplayName: name, Email: email, Organization: org}
+				if rows := presenter.DetailRows(account); len(rows) > maxAccountRows {
+					t.Errorf("%+v produced %d rows, over the %d allocated", account, len(rows), maxAccountRows)
+				}
+			}
+		}
+	}
+}
+
 func TestDetailRowLabelsAreLocalized(t *testing.T) {
-	account := &identity.Account{Email: "sample@example.com", Organization: "Sample Org"}
+	account := &identity.Account{DisplayName: "Sample", Email: "sample@example.com", Organization: "Sample Org"}
 	rows := presenterFor(t, i18n.LangPtBR).DetailRows(account)
 	if len(rows) != 2 || rows[1].Label != "Organização" {
 		t.Errorf("pt-BR rows = %+v", rows)
@@ -456,7 +611,7 @@ func TestNoStatusLinePairsAnInstantWithASpan(t *testing.T) {
 		presenter := presenterFor(t, lang)
 		texts := []string{presenter.StatusText(overdue, now), presenter.Tooltip(overdue, now)}
 		for _, row := range presenter.Rows(overdue, now) {
-			texts = append(texts, row.Detail)
+			texts = append(texts, row.Label, row.Detail)
 		}
 		for _, text := range texts {
 			for _, broken := range []string{"há agora", "now ago", "de agora atrás", "in now", "em agora"} {

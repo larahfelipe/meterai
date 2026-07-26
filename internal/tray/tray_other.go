@@ -49,16 +49,36 @@ func run(ctx context.Context, w io.Writer, wiring Wiring) error {
 
 // render takes its destination as a parameter so the headless output can be
 // asserted without capturing the process's stderr.
+//
+// The column widths are this file's own: a terminal is monospaced, so it lines
+// rows up with padding where the menu has to use a tab. What it reproduces is the
+// order and the grouping, which is what the pipeline is being exercised for.
 func render(w io.Writer, presenter *Presenter, state PollState, account *identity.Account, now time.Time) {
-	fmt.Fprintf(w, "\n[%s] meterAI\n", now.Format(time.RFC3339))
-	if header := presenter.HeaderText(state); header != "" {
-		fmt.Fprintf(w, "  %s\n", header)
-	}
-	for _, row := range presenter.DetailRows(account) {
-		fmt.Fprintf(w, "  %-16s %s\n", row.Label, row.Detail)
-	}
+	fmt.Fprintf(w, "\n[%s] %s\n", now.Format(time.RFC3339), AppName)
+	writeRow(w, presenter.HeaderRow(state))
+	writeRow(w, presenter.AccountRow(account))
 	for _, row := range presenter.Rows(state, now) {
-		fmt.Fprintf(w, "  %-16s %-10s %s\n", row.Label, row.Bar, row.Detail)
+		writeRow(w, row)
 	}
 	fmt.Fprintf(w, "  %s\n", presenter.StatusText(state, now))
+	for _, row := range presenter.DetailRows(account) {
+		writeRow(w, row)
+	}
+	writeRow(w, presenter.IntervalRow())
+	writeRow(w, presenter.LanguageRow())
+}
+
+// writeRow prints one row, skipping an empty one exactly as the menu hides it.
+func writeRow(w io.Writer, row Row) {
+	// labelWidth pads the left column to where the widest label of a live poll
+	// ends. A terminal is monospaced, so padding lines the values up here where the
+	// menu needs a tab.
+	const labelWidth = 32
+	switch {
+	case row == (Row{}):
+	case row.Detail == "" && row.Bar == "":
+		fmt.Fprintf(w, "  %s\n", row.Label)
+	default:
+		fmt.Fprintf(w, "  %-*s %4s  %s\n", labelWidth, row.Label, row.Detail, row.Bar)
+	}
 }

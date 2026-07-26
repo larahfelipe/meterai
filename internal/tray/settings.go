@@ -45,6 +45,24 @@ func (p *Presenter) IntervalLabel(interval time.Duration) string {
 	}
 }
 
+// IntervalRow and LanguageRow are the two settings submenus as their parent rows:
+// the name on the left, the value in force on the right. Reading a setting then
+// costs no navigation — the submenu is only needed to change one — and the ticks
+// inside it stay the control, so the two can never disagree.
+func (p *Presenter) IntervalRow() Row {
+	return Row{
+		Label:  p.catalog.Text(i18n.MenuInterval),
+		Detail: p.IntervalLabel(time.Duration(p.cfg.PollInterval)),
+	}
+}
+
+func (p *Presenter) LanguageRow() Row {
+	return Row{
+		Label:  p.catalog.Text(i18n.MenuLanguage),
+		Detail: p.catalog.Lang().NativeName(),
+	}
+}
+
 // Config reports the settings this Presenter renders with, so the platform layer
 // can derive a changed document from it without keeping a second copy.
 func (p *Presenter) Config() config.Config { return p.cfg }

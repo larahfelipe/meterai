@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +67,68 @@ func TestIntervalLabelIsLocalized(t *testing.T) {
 	for _, lang := range i18n.Available() {
 		if got := presenterFor(t, lang).IntervalLabel(15 * time.Minute); got == "" {
 			t.Errorf("%s: IntervalLabel returned nothing", lang)
+		}
+	}
+}
+
+// A settings row states the value in force beside its name, so nothing has to be
+// opened to read it. The submenu is only needed to change one.
+func TestSettingsRowsCarryTheValueInForce(t *testing.T) {
+	cfg := config.Default()
+	cfg.PollInterval = config.Duration(30 * time.Minute)
+	cfg.Language = string(i18n.LangPtBR)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	presenter := NewPresenter(cfg)
+
+	interval := presenter.IntervalRow()
+	if interval.Label != "Atualizar a cada" || interval.Detail != "30 min" {
+		t.Errorf("interval row = %+v", interval)
+	}
+	language := presenter.LanguageRow()
+	if language.Label != "Idioma" || language.Detail != "Português (BR)" {
+		t.Errorf("language row = %+v", language)
+	}
+	// A language is named by its own endonym in every catalogue, so the row a user
+	// who cannot read the current interface looks for still names theirs.
+	for _, lang := range i18n.Available() {
+		if got := presenterFor(t, lang).LanguageRow().Detail; got != lang.NativeName() {
+			t.Errorf("%s: language row value = %q, want the endonym %q", lang, got, lang.NativeName())
+		}
+	}
+}
+
+// The value belongs in the column every other row puts its value in, which is
+// what the tab selects. A row that put it on the left would be the one row in the
+// menu that does not align.
+func TestSettingsRowsUseTheValueColumn(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangEnUS)
+	for _, row := range []Row{presenter.IntervalRow(), presenter.LanguageRow()} {
+		title := MenuRowTitle(row)
+		if strings.Count(title, menuRightAlign) != 1 {
+			t.Errorf("title %q must carry exactly one column break", title)
+		}
+		if _, right, _ := strings.Cut(title, menuRightAlign); right != row.Detail {
+			t.Errorf("right of the break = %q, want the value %q", right, row.Detail)
+		}
+	}
+}
+
+// Every cadence the menu offers has to be nameable: a preset whose row rendered a
+// raw Go duration would be the one row in the menu written by the compiler.
+func TestEverySettingsValueIsNameable(t *testing.T) {
+	for _, preset := range IntervalPresets() {
+		for _, lang := range i18n.Available() {
+			cfg := config.Default()
+			cfg.PollInterval = config.Duration(preset)
+			cfg.Language = string(lang)
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("%v in %s: %v", preset, lang, err)
+			}
+			if got := NewPresenter(cfg).IntervalRow().Detail; got == preset.String() {
+				t.Errorf("%s: cadence %v renders as its Go duration %q", lang, preset, got)
+			}
 		}
 	}
 }

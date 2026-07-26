@@ -24,6 +24,12 @@ import (
 // bounded here instead.
 const maxTooltipRunes = 127
 
+// AppName is the product name, and the one user-visible string that resolves
+// outside i18n because it is identical in every language. Windows announces it as
+// the accessible name of the tray icon, and it heads the menu until a provider
+// has been reached.
+const AppName = "meterAI"
+
 const (
 	ellipsis = "…"
 	// fieldSeparator joins a message to the fragment that follows it. Catalogue
@@ -33,17 +39,30 @@ const (
 	// labelDetailSeparator sets a meter's figures apart from its name inside one
 	// tooltip line, where a single space reads as part of the label.
 	labelDetailSeparator = "  "
-	// menuFieldGap separates a menu row's fields. Three spaces is what reads as a
-	// column break in the shell's proportional menu font.
-	menuFieldGap = "   "
 	// menuRightAlign is the tab Windows treats as a column break in a menu item:
 	// everything after it is drawn flush against the right edge of the menu. It is
-	// what keeps the gauges in one column when the labels beside them differ in
+	// what keeps every value in one column when the labels beside them differ in
 	// length; padding with spaces cannot, because the menu font is proportional.
+	//
+	// Every row in the menu obeys the same grammar because of it: what it is on
+	// the left, what it currently reads on the right.
 	menuRightAlign = "\t"
-	// headerFieldGap joins the product name to the plan on the header row. They
-	// read as one product name ("Claude Max"), so the separator is a plain space.
+	// menuValueGap keeps a figure and its gauge apart inside the right column
+	// while still reading as one component. Both are flush right, so a gauge of
+	// fixed width puts the figures that precede it in a column of their own with
+	// no padding: their right edges land at the same offset whatever the value.
+	menuValueGap = "  "
+	// menuContinuationIndent subordinates a row to the one above it. Windows
+	// menus offer no other way to express depth at the same level: there is no
+	// per-item font weight, size or colour without owner-draw, which systray does
+	// not do.
+	menuContinuationIndent = "    "
+	// headerFieldGap joins the product name to the plan. They read as one product
+	// name ("Claude Max"), so the separator is a plain space.
 	headerFieldGap = " "
+	// menuMnemonicMarker is the character Windows consumes to mark the next one as
+	// an item's keyboard mnemonic. Doubling it is how a literal one is drawn.
+	menuMnemonicMarker = '&'
 )
 
 // PollState aliases the poller's state so the platform-specific files in this
@@ -89,34 +108,67 @@ type AccountReader interface {
 	Account() (*identity.Account, error)
 }
 
-// Row is one meter as presented in the menu: a name, a gauge, and its current
-// figures. Bar is empty for a meter with no bounded percentage, such as an
-// uncapped balance, where a gauge would imply a limit the vendor never stated.
+// Row is one line of the menu under a single grammar: Label names the thing on
+// the left, Detail is its current value on the right, and Bar is the gauge drawn
+// beside that value. Bar is empty for anything with no bounded percentage — an
+// uncapped balance, a setting, an account field — where a gauge would imply a
+// limit that does not exist.
 type Row struct {
 	Label  string
-	Bar    string
 	Detail string
+	Bar    string
 }
 
-// MenuRowTitle lays out one row as a single menu caption: the label and its
-// figures on the left, the gauge pushed to the right edge. A field the meter does
-// not have is skipped, so an uncapped balance shows no gap where a gauge would be,
-// and a row with no gauge carries no column break at all.
+// MenuRowTitle lays out one row as a single menu caption: the label on the left,
+// the value and its gauge flush right. A row with nothing to put on the right
+// carries no column break at all, because an empty right column widens every
+// other row in the same menu.
+//
+// Every field is neutralized on the way through, since this is the last point
+// before an account name, an organization or a vendor's own meter label reaches
+// the shell.
 //
 // It lives here rather than in the platform glue because it is the one part of the
 // menu's appearance that can be asserted on any host.
 func MenuRowTitle(row Row) string {
-	left := make([]string, 0, 2)
-	for _, field := range []string{row.Label, row.Detail} {
-		if field != "" {
-			left = append(left, field)
+	right := sanitizeMenuField(row.Detail)
+	if row.Bar != "" {
+		if right != "" {
+			right += menuValueGap
+		}
+		right += sanitizeMenuField(row.Bar)
+	}
+	label := sanitizeMenuField(row.Label)
+	if right == "" {
+		return label
+	}
+	return label + menuRightAlign + right
+}
+
+// sanitizeMenuField makes one field safe to hand to a Win32 menu item. A title
+// reaches the shell verbatim, where an ampersand selects the character after it
+// as the item's keyboard mnemonic and vanishes from the caption, a tab opens a
+// column break of its own, and a bidirectional format character reorders the row
+// around it. None of that may be reachable from a document this app only reads.
+func sanitizeMenuField(field string) string {
+	var safe strings.Builder
+	safe.Grow(len(field))
+	for _, r := range field {
+		switch {
+		case r == menuMnemonicMarker:
+			safe.WriteRune(menuMnemonicMarker)
+			safe.WriteRune(menuMnemonicMarker)
+		case unicode.IsControl(r):
+			// Includes the tab: the only column break in a caption is the one
+			// MenuRowTitle puts there.
+			safe.WriteRune(' ')
+		case unicode.Is(unicode.Cf, r):
+			// Format characters draw nothing and can reorder what follows them.
+		default:
+			safe.WriteRune(r)
 		}
 	}
-	title := strings.Join(left, menuFieldGap)
-	if row.Bar == "" {
-		return title
-	}
-	return title + menuRightAlign + row.Bar
+	return safe.String()
 }
 
 // Presenter turns poll state into the text and icon inputs the platform layer
@@ -132,39 +184,86 @@ func NewPresenter(cfg config.Config) *Presenter {
 	return &Presenter{cfg: cfg, catalog: cfg.Catalog()}
 }
 
-// HeaderText names what is being monitored, in one row: the provider and the
-// plan. It returns an empty string before the first successful poll, so the row
-// can be hidden rather than showing a bare separator.
+// HeaderRow names what is being monitored: the provider on the left, the plan it
+// qualifies on the right. Splitting them is the only hierarchy a Windows menu
+// affords — the provider holds the position the eye lands on first and the plan
+// sits in the value column every other row uses, so "which service" and "which
+// allowance" are read in one pass instead of being parsed out of one phrase.
 //
-// Who the account belongs to is deliberately not here — it is one level down, in
-// DetailRows, because the row read at a glance should answer "which service and
-// which allowance", not "which person".
-func (p *Presenter) HeaderText(state poll.State) string {
+// Before a provider has been reached it names the app itself. The row cannot be
+// left empty: systray can hide an item but not a separator, so an empty heading
+// would open the menu with a divider above nothing.
+func (p *Presenter) HeaderRow(state poll.State) Row {
 	if state.Snapshot == nil {
-		return ""
+		return Row{Label: AppName}
 	}
-	fields := make([]string, 0, 2)
-	// Product is the vendor's own name for what is metered; Vendor is only a key,
-	// so it stands in just when a provider states no product.
-	if product := state.Snapshot.Product; product != "" {
-		fields = append(fields, product)
-	} else if state.Snapshot.Vendor != "" {
-		fields = append(fields, capitalizeFirst(state.Snapshot.Vendor))
+	// Vendor is only a persisted key, but it is the provider's name; Product is
+	// the vendor's own display name for what is metered and stands in when a
+	// provider states no vendor at all.
+	brand := capitalizeFirst(state.Snapshot.Vendor)
+	if brand == "" {
+		brand = state.Snapshot.Product
+	}
+
+	qualifiers := make([]string, 0, 2)
+	if product := state.Snapshot.Product; product != "" && product != brand {
+		qualifiers = append(qualifiers, product)
 	}
 	if state.Snapshot.Plan != "" {
-		fields = append(fields, capitalizeFirst(state.Snapshot.Plan))
+		qualifiers = append(qualifiers, capitalizeFirst(state.Snapshot.Plan))
 	}
-	return strings.Join(fields, headerFieldGap)
+	plan := strings.Join(qualifiers, headerFieldGap)
+
+	switch {
+	case brand != "":
+		return Row{Label: brand, Detail: plan}
+	case plan != "":
+		// A provider that named neither itself nor its product still gets one legible
+		// row, rather than a plan floating alone in the value column.
+		return Row{Label: plan}
+	default:
+		return Row{Label: AppName}
+	}
+}
+
+// AccountRow subordinates the account to the header above it: whose subscription
+// this is, indented, with no label of its own because a person's name needs none.
+// It is a Row so it passes through the same sanitizing as every other caption.
+//
+// The e-mail deliberately stays one level down. The name is what identifies the
+// account at a glance, and an address left permanently on screen is read by
+// everyone watching a shared screen.
+func (p *Presenter) AccountRow(account *identity.Account) Row {
+	headline := accountHeadline(account)
+	if headline == "" {
+		return Row{}
+	}
+	return Row{Label: menuContinuationIndent + headline}
+}
+
+// accountHeadline is the one account field shown at the first level of the menu.
+// The e-mail stands in when the CLI cached no name, which is the case for an
+// account that has never had one set.
+func accountHeadline(account *identity.Account) string {
+	if account == nil {
+		return ""
+	}
+	if account.DisplayName != "" {
+		return account.DisplayName
+	}
+	return account.Email
 }
 
 // DetailRows are the account facts that answer "which subscription am I looking
-// at" without crowding the first level of the menu. Rows for fields the vendor
-// never supplied are omitted rather than rendered empty.
+// at" without crowding the first level of the menu. Rows for fields the CLI never
+// cached are omitted rather than rendered empty, and so is whatever AccountRow
+// already shows: the same value twice in two levels of one menu reads as a bug.
 func (p *Presenter) DetailRows(account *identity.Account) []Row {
 	if account == nil {
 		return nil
 	}
-	rows := make([]Row, 0, 3)
+	shown := accountHeadline(account)
+	rows := make([]Row, 0, maxAccountRows)
 	for _, field := range []struct {
 		key   i18n.Key
 		value string
@@ -173,13 +272,18 @@ func (p *Presenter) DetailRows(account *identity.Account) []Row {
 		{i18n.AccountEmail, account.Email},
 		{i18n.AccountOrganization, account.Organization},
 	} {
-		if field.value == "" {
+		if field.value == "" || field.value == shown {
 			continue
 		}
 		rows = append(rows, Row{Label: p.catalog.Text(field.key), Detail: field.value})
 	}
 	return rows
 }
+
+// maxAccountRows is the most rows DetailRows can produce: one of the three fields
+// always heads the menu instead. The platform layer pre-allocates exactly this
+// many submenu rows, so a test asserts the ceiling rather than trusting it.
+const maxAccountRows = 2
 
 // capitalizeFirst title-cases a vendor's plan label, which arrives lowercase
 // ("max", "pro"). Only the first rune is touched: the rest is the vendor's own
@@ -199,14 +303,52 @@ func (p *Presenter) Rows(state poll.State, now time.Time) []Row {
 		return nil
 	}
 	rows := make([]Row, 0, len(state.Snapshot.Meters))
+	var stated time.Time
 	for _, meter := range state.Snapshot.Meters {
+		// Windows that empty together say so once. Anthropic reports every weekly
+		// window with the same reset instant, and three consecutive rows repeating
+		// one countdown bury the figures they exist to show; the rows without it read
+		// as belonging to the one above, which is what they are.
+		reset := meter.ResetsAt()
+		statesReset := !reset.IsZero() && !reset.Equal(stated)
+		stated = reset
+
 		rows = append(rows, Row{
-			Label:  p.catalog.MeterLabel(meter.ID(), meter.Label()),
+			Label:  p.meterTitle(meter, now, statesReset),
+			Detail: p.figure(meter),
 			Bar:    meterBar(meter),
-			Detail: p.detail(meter, now),
 		})
 	}
 	return rows
+}
+
+// meterTitle names a window and, unless the row above already did, says when it
+// resets. Both belong on the left, away from the figure: they are what the row is
+// about, read once, while the figure is what changes between polls.
+func (p *Presenter) meterTitle(meter quota.Meter, now time.Time, statesReset bool) string {
+	label := p.catalog.MeterLabel(meter.ID(), meter.Label())
+	if !statesReset {
+		return label
+	}
+	countdown := p.countdown(meter.ResetsAt().Sub(now))
+	return label + fieldSeparator + p.catalog.Text(i18n.MeterResetSuffix, countdown)
+}
+
+// figure is the single reading the row exists to show, and the only field in it
+// that shares the right column with the gauge.
+func (p *Presenter) figure(meter quota.Meter) string {
+	switch m := meter.(type) {
+	case *quota.Utilization:
+		// The percent sign is not translated: it is universal in both catalogues
+		// and a verb lost in a future translation would corrupt the figure.
+		return fmt.Sprintf("%.0f%%", m.Percent)
+	case *quota.Balance:
+		if m.Limit != nil {
+			return p.catalog.Text(i18n.BalanceUsedOfLimit, m.Used, *m.Limit)
+		}
+		return m.Used.String()
+	}
+	return ""
 }
 
 // meterBar renders a gauge only for a meter whose percentage is bounded by an
@@ -223,26 +365,6 @@ func meterBar(meter quota.Meter) string {
 		return progressBar(m.Percent)
 	}
 	return ""
-}
-
-func (p *Presenter) detail(meter quota.Meter, now time.Time) string {
-	var text string
-	switch m := meter.(type) {
-	case *quota.Utilization:
-		// The percent sign is not translated: it is universal in both catalogues
-		// and a verb lost in a future translation would corrupt the figure.
-		text = fmt.Sprintf("%.0f%%", m.Percent)
-	case *quota.Balance:
-		if m.Limit != nil {
-			text = p.catalog.Text(i18n.BalanceUsedOfLimit, m.Used, *m.Limit)
-		} else {
-			text = m.Used.String()
-		}
-	}
-	if reset := meter.ResetsAt(); !reset.IsZero() {
-		text += fieldSeparator + p.catalog.Text(i18n.MeterResetSuffix, p.countdown(reset.Sub(now)))
-	}
-	return text
 }
 
 // countdown renders a duration at the precision a user actually reads: minutes

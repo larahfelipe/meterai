@@ -13,12 +13,18 @@ const (
 	// menu shows without eliding.
 	meterBarCells = 10
 
-	// barFilledCell and barEmptyCell are Block Elements. Both are full-width in
-	// the menu font, so a gauge occupies the same space whatever its value; a
-	// pair of glyphs with different advance widths would misalign the figures
-	// that follow it, since Windows menus use a proportional font.
-	barFilledCell = '█'
-	barEmptyCell  = '░'
+	// barFilledCell and barEmptyCell are both Block Elements, which is what makes
+	// them safe to pair: a font either covers that Unicode block or falls back for
+	// all of it, so the two glyphs always come from the same face at the same
+	// advance width. A pair drawn from two different faces would misalign the
+	// figures beside it, since Windows menus use a proportional font.
+	//
+	// They are half-height and one-eighth-height rather than a full block against
+	// a shaded block: both sit on the baseline, so the gauge reads as a slim rule
+	// with a track under it instead of a wall of dither, and the contrast between
+	// consumed and remaining comes from mass rather than from texture.
+	barFilledCell = '▄'
+	barEmptyCell  = '▁'
 )
 
 // progressBar renders percent as a fixed-width gauge.

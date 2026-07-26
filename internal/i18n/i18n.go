@@ -88,15 +88,10 @@ type Key uint8
 
 const (
 	MenuRefresh Key = iota + 1
-	MenuRefreshTooltip
 	MenuDetails
-	MenuDetailsTooltip
 	MenuSettings
-	MenuSettingsTooltip
 	MenuInterval
-	MenuIntervalTooltip
 	MenuLanguage
-	MenuLanguageTooltip
 	IntervalMinutes
 	IntervalHours
 	SettingsSaveFailed
@@ -104,7 +99,6 @@ const (
 	AccountEmail
 	AccountOrganization
 	MenuQuit
-	MenuQuitTooltip
 	RefreshRejected
 	MeterResetSuffix
 	BalanceUsedOfLimit
@@ -130,15 +124,10 @@ const (
 
 var keyNames = [keyCount]string{
 	MenuRefresh:          "MenuRefresh",
-	MenuRefreshTooltip:   "MenuRefreshTooltip",
 	MenuDetails:          "MenuDetails",
-	MenuDetailsTooltip:   "MenuDetailsTooltip",
 	MenuSettings:         "MenuSettings",
-	MenuSettingsTooltip:  "MenuSettingsTooltip",
 	MenuInterval:         "MenuInterval",
-	MenuIntervalTooltip:  "MenuIntervalTooltip",
 	MenuLanguage:         "MenuLanguage",
-	MenuLanguageTooltip:  "MenuLanguageTooltip",
 	IntervalMinutes:      "IntervalMinutes",
 	IntervalHours:        "IntervalHours",
 	SettingsSaveFailed:   "SettingsSaveFailed",
@@ -146,7 +135,6 @@ var keyNames = [keyCount]string{
 	AccountEmail:         "AccountEmail",
 	AccountOrganization:  "AccountOrganization",
 	MenuQuit:             "MenuQuit",
-	MenuQuitTooltip:      "MenuQuitTooltip",
 	RefreshRejected:      "RefreshRejected",
 	MeterResetSuffix:     "MeterResetSuffix",
 	BalanceUsedOfLimit:   "BalanceUsedOfLimit",

@@ -22,18 +22,27 @@ func TestRenderWritesEveryMeterAndTheStatusLine(t *testing.T) {
 
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	// A blank line, the timestamp banner, the provider header, one line per meter,
-	// then the status line.
-	if len(lines) != 6 {
-		t.Fatalf("output has %d lines, want 6:\n%s", len(lines), out.String())
+	// the status line, then the two settings rows. No account is given here, so
+	// neither the account row nor the detail rows appear.
+	if len(lines) != 8 {
+		t.Fatalf("output has %d lines, want 8:\n%s", len(lines), out.String())
 	}
 	if !strings.Contains(lines[1], "meterAI") || !strings.Contains(lines[1], now.Format("2006-01-02")) {
 		t.Errorf("banner = %q, want the app name and the observation instant", lines[1])
+	}
+	if !strings.Contains(lines[2], "Anthropic") || !strings.Contains(lines[2], "Claude Pro") {
+		t.Errorf("header = %q, want the provider and the plan", lines[2])
 	}
 	if !strings.Contains(lines[3], "Session (5h)") || !strings.Contains(lines[3], "23%") {
 		t.Errorf("meter line = %q", lines[3])
 	}
 	if !strings.Contains(lines[5], "Updated") {
 		t.Errorf("status line = %q", lines[5])
+	}
+	// The settings in force are readable without opening anything, which is what
+	// the menu itself does with them.
+	if !strings.Contains(lines[6], "5 min") || !strings.Contains(lines[7], "English (US)") {
+		t.Errorf("settings lines = %q, %q", lines[6], lines[7])
 	}
 }
 
@@ -49,15 +58,23 @@ func TestRenderWritesTheAccountItIsGiven(t *testing.T) {
 	}
 }
 
-func TestRenderBeforeTheFirstPollWritesOnlyTheStatusLine(t *testing.T) {
+func TestRenderBeforeTheFirstPollWritesNoReading(t *testing.T) {
 	var out bytes.Buffer
 	render(&out, presenterFor(t, i18n.LangEnUS), poll.State{}, nil, now)
 
-	if strings.Count(out.String(), "\n") != 3 {
-		t.Errorf("output = %q, want a blank line, a header and a status line", out.String())
+	// Nothing has been read yet, so the account and every meter row are absent: a
+	// blank line, the banner, the app's own heading, the status line and the two
+	// settings rows.
+	if got := strings.Count(out.String(), "\n"); got != 6 {
+		t.Errorf("output has %d lines: %q", got, out.String())
 	}
 	if !strings.Contains(out.String(), "Polling…") {
 		t.Errorf("output = %q, does not disclose that no reading exists yet", out.String())
+	}
+	for _, unwanted := range []string{"Claude", "Anthropic", "%"} {
+		if strings.Contains(out.String(), unwanted) {
+			t.Errorf("output = %q, invents %q before the first poll", out.String(), unwanted)
+		}
 	}
 }
 

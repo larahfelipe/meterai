@@ -67,10 +67,10 @@ Vendors expose quota in structurally different shapes: rolling percentage
 windows, daily counters, a money balance. `quota.Meter` is a sealed union with
 exactly two variants, which makes handling exhaustive by construction:
 
-| Variant | Represents | Fields |
-|---|---|---|
+| Variant             | Represents                 | Fields                                  |
+| ------------------- | -------------------------- | --------------------------------------- |
 | `quota.Utilization` | percentage of an allowance | `Percent`, `Reset`, `Level`, `IsActive` |
-| `quota.Balance` | monetary balance | `Used`, `Limit`, `Percent`, `Level` |
+| `quota.Balance`     | monetary balance           | `Used`, `Limit`, `Percent`, `Level`     |
 
 Rules that hold for every provider:
 
@@ -88,12 +88,12 @@ Rules that hold for every provider:
 Every fetch failure is a `*quota.FetchError` carrying one of the four kinds
 below. The kind determines what the poller does and what the UI tells the user:
 
-| Kind | Origin | Reaction |
-|---|---|---|
-| `Unauthorized` | 401/403, expired token | waits for user action |
-| `RateLimited` | 429 | honours `Retry-After` |
-| `Transient` | network failure, 5xx, timeout | exponential backoff |
-| `Protocol` | uninterpretable response | waits for a fix in the app |
+| Kind           | Origin                        | Reaction                   |
+| -------------- | ----------------------------- | -------------------------- |
+| `Unauthorized` | 401/403, expired token        | waits for user action      |
+| `RateLimited`  | 429                           | honours `Retry-After`      |
+| `Transient`    | network failure, 5xx, timeout | exponential backoff        |
+| `Protocol`     | uninterpretable response      | waits for a fix in the app |
 
 The distinction that matters: `Transient` and `RateLimited` resolve by waiting;
 `Unauthorized` and `Protocol` do not, and retrying them only reproduces the same
@@ -137,20 +137,54 @@ Run `dist\meterAI.exe`. The icon appears in the notification area.
 - **Hovering** shows each quota window, its percentage, and the time to reset.
   The tooltip carries no gauges: the shell caps it at 127 characters, and ten
   cells per meter would push the status line out of it.
-- **Clicking** opens a menu headed by the product and plan being monitored
-  ("Claude Max"), then
-  one row per meter, a *Details* submenu carrying the account name, e-mail and
-  organization, a *Settings* submenu, and finally *Refresh now* and *Quit*. The
-  header answers which service and which allowance; who the account belongs to is
-  one level down.
-- Each meter row puts its label and figures on the left and its **gauge flush
-  against the right edge**, so the gauges line up in one column even though the
-  labels differ in length. That column break is a tab character, which Windows
-  menus draw right-aligned; padding with spaces cannot align anything, because the
-  menu font is proportional. A meter with no stated allowance, such as an uncapped
-  balance, shows no gauge rather than an empty one — and no column break either,
-  since an empty one would widen every other row.
-- **Settings** changes the update cadence and the interface language without a
+- **Clicking** opens the menu:
+
+```
+ Anthropic                                          Claude Pro
+     Felipe Lara
+ ─────────────────────────────────────────────────────────────
+ Session (5h) · resets in 2h13              47%  ▄▄▄▄▄▁▁▁▁▁
+ Weekly (7d) · resets in 4d06h             100%  ▄▄▄▄▄▄▄▄▄▄
+ Weekly Opus (7d)                            4%  ▄▁▁▁▁▁▁▁▁▁
+ ─────────────────────────────────────────────────────────────
+ Updated 1m ago · next in 3m
+ Refresh now
+ Details                                                    ▸
+ Settings                                                   ▸
+ ─────────────────────────────────────────────────────────────
+ Quit
+```
+
+- **Every row obeys one grammar**: what it is on the left, what it currently reads
+  on the right. The provider takes the position the eye lands on first and the
+  plan sits in the value column, so which service and which allowance are read in
+  one pass instead of being parsed out of one phrase. The account name is indented
+  under it; the e-mail and organization are a level down, in _Details_, because an
+  address left permanently on screen is read by everyone watching a shared screen.
+- That right-hand column is a **tab character**, which Windows menus draw flush
+  right. Padding with spaces cannot align anything, because the menu font is
+  proportional. Because the gauge is a fixed ten cells wide and the whole column
+  is flush right, the figures beside it land in a column of their own with no
+  padding at all. A row with nothing to put on the right — _Refresh now_, the
+  status line, an uncapped balance's missing gauge — carries no column break,
+  since an empty one would widen every other row in the menu.
+- **Windows that empty together state their countdown once.** Anthropic reports
+  every weekly window with the same reset instant; three consecutive rows
+  repeating it would bury the figures they exist to show, and the rows without it
+  read as belonging to the one above, which is what they are.
+- The gauge is drawn in **half-height and one-eighth-height block elements**
+  (`▄▁`) rather than a full block against a shaded one. Both sit on the baseline,
+  so it reads as a slim rule with a track under it, and both come from the same
+  Unicode block — a font either covers that block or falls back for all of it,
+  which is what keeps the two glyphs at one advance width.
+- The menu is **text only**: no per-item font weight, size or colour, no icons and
+  no animation. Those need an owner-drawn menu, which systray does not do. The
+  upside is that every row inherits the shell's own metrics, so it follows the
+  Light and Dark themes and every DPI scale for free, and the contrast is the
+  system's own.
+- **Settings** state the value in force beside their name, so reading one costs no
+  navigation and the submenu is only needed to change it. They change the update
+  cadence and the interface language without a
   restart. Each change is written to the config file first and only then applied,
   so the menu never shows a setting that is not on disk; if the write fails, the
   status line says so and nothing changes. A new cadence takes effect after the
@@ -195,15 +229,15 @@ A JSON file, created on first run with owner-only permissions:
 }
 ```
 
-| Field | Meaning |
-|---|---|
-| `credentialPath` | Explicit path to the credential file. Empty enables autodiscovery. |
-| `pollInterval` | Polling cadence. Values below the safe minimum are rejected with a message, not silently corrected. |
-| `warnAtPercent` | Local warning threshold. |
-| `criticalAtPercent` | Local critical threshold. Must be greater than or equal to `warnAtPercent`. |
-| `language` | Interface language: `en-US` (default) or `pt-BR`. Empty selects the default; an unsupported tag is rejected with the list of accepted ones. |
+| Field               | Meaning                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `credentialPath`    | Explicit path to the credential file. Empty enables autodiscovery.                                                                          |
+| `pollInterval`      | Polling cadence. Values below the safe minimum are rejected with a message, not silently corrected.                                         |
+| `warnAtPercent`     | Local warning threshold.                                                                                                                    |
+| `criticalAtPercent` | Local critical threshold. Must be greater than or equal to `warnAtPercent`.                                                                 |
+| `language`          | Interface language: `en-US` (default) or `pt-BR`. Empty selects the default; an unsupported tag is rejected with the list of accepted ones. |
 
-`pollInterval` and `language` are also editable from the *Settings* submenu,
+`pollInterval` and `language` are also editable from the _Settings_ submenu,
 which writes this same file. The menu offers only cadences at or above the floor,
 so a choice made there can always be saved.
 
@@ -283,14 +317,14 @@ only, because the document also holds the user's project paths.
 
 ## Cadence and recovery
 
-| Situation | Next poll |
-|---|---|
-| Success | configured interval |
-| Transient failure | doubles per consecutive failure, up to a cap |
-| `429` | the server's `Retry-After`, never below the configured interval |
-| Expired credential or changed schema | long degraded interval |
+| Situation                            | Next poll                                                       |
+| ------------------------------------ | --------------------------------------------------------------- |
+| Success                              | configured interval                                             |
+| Transient failure                    | doubles per consecutive failure, up to a cap                    |
+| `429`                                | the server's `Retry-After`, never below the configured interval |
+| Expired credential or changed schema | long degraded interval                                          |
 
-A successful poll resets the escalation. *Refresh now* has a minimum spacing
+A successful poll resets the escalation. _Refresh now_ has a minimum spacing
 between invocations, charged at the moment the request is accepted — so a burst
 of clicks cannot queue several polls in the window before the first response
 arrives.
@@ -372,7 +406,7 @@ go test -race ./...              # includes tests that hit the real API
 go test -short -race ./...       # offline and deterministic only
 ```
 
-Tests marked *live* query the real endpoint and are skipped under `-short`. They
+Tests marked _live_ query the real endpoint and are skipped under `-short`. They
 are useful for detecting schema drift, but consume one request per run.
 
 The Anthropic provider's parser is checked against a fixture reproducing the
@@ -403,6 +437,18 @@ structural rather than conventional:
 
 The config file is created with owner-only permissions: it holds no secret, but
 it does hold a path into the credential store.
+
+Menu captions are the app's last hop before the shell, and three of the strings
+in them — the account name, the organization and a vendor's own label for a meter
+— arrive from documents this app only reads. Every field is neutralized on the way
+through `tray.MenuRowTitle`: an ampersand is doubled, since Windows consumes a
+single one as a keyboard mnemonic and drops the character after it from the
+caption; control characters become spaces, so a tab cannot open a second column
+break and throw a row's value out of its column; and format characters are
+dropped, since a bidirectional override draws nothing while reversing everything
+after it, which is enough to make one row read as another account. Catalogue text
+is exempt because it is written here rather than read, and a test fails the build
+if a translation ever carries one of those characters.
 
 ---
 

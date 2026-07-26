@@ -47,10 +47,22 @@ Vendor-specific knowledge stops inside `internal/provider/<vendor>/`. Never name
 `internal/tray/format.go` and `internal/trayicon` are pure and fully testable; the `_windows.go` and
 `_other.go` files are platform glue and are not.
 
-**Menu row layout is a tab, not padding.** `tray.MenuRowTitle` puts the gauge after `\t`, which
+**Menu row layout is a tab, not padding.** Every row obeys one grammar: what it is on the left,
+what it currently reads on the right. `tray.MenuRowTitle` puts the right column after `\t`, which
 Windows menus draw flush right; spaces cannot align a column in a proportional font. systray sets
-items as `MFT_STRING` (no owner-draw), which is what makes the shell's own tab handling apply. A row
-with no gauge carries no tab, because an empty right column widens every other row.
+items as `MFT_STRING` (no owner-draw), which is what makes the shell's own tab handling apply — and
+also what rules out per-item font weight, size, colour, icons and animation. A row with nothing to
+put on the right carries no tab, because an empty right column widens every other row. Because the
+gauge is a fixed width and the column is flush right, the figures beside it align with no padding.
+
+**`MenuRowTitle` is where external text stops being data.** Account name, organization and a
+vendor's own meter label reach the shell verbatim otherwise: `&` is consumed as a mnemonic marker,
+a control character opens a spurious column break, a `Cf` override reverses the row. Every field is
+neutralized there, and an i18n test asserts no catalogue string needs it.
+
+**Windows popup menus have no per-item tooltip.** systray's Windows backend drops the argument, so
+hover help would have to be owner-drawn; a row that cannot say what it means in its own caption
+cannot say it at all. That is why the tooltip catalogue keys no longer exist.
 
 ## Invariants that span files
 
@@ -93,12 +105,17 @@ package, not in `internal/i18n`, because it is vendor knowledge and is identical
 
 **Meter order in a `Snapshot` is load-bearing.** It sets menu row order and decides which meters
 survive tooltip truncation at 127 runes and the fixed `maxMeterRows = 6` menu slots. Never sort it,
-never build it by iterating a map.
+never build it by iterating a map. It also decides which row states a shared reset countdown:
+`Presenter.Rows` suppresses one that repeats the row immediately above, so reordering moves the
+countdown to a different row.
 
 **Every menu item is allocated once in `onReady` and only ever shown or hidden** — meter rows, the
-account header and the `maxDetailRows` submenu rows — because systray can add an item but never
+two heading rows and the `maxDetailRows` submenu rows — because systray can add an item but never
 remove one. A row with nothing to say is hidden, never left blank, and a submenu with no visible rows
-hides its parent too.
+hides its parent too. **A separator cannot be hidden at all**, which is why `HeaderRow` falls back to
+`tray.AppName` instead of ever returning empty: the first group would otherwise open with a divider
+above nothing. `maxDetailRows` derives from `maxAccountRows`, the ceiling a test holds `DetailRows`
+to, because one of the three account fields always heads the menu instead.
 
 **Money never passes through `float64`** — `quota.Money` is minor units and `Exponent` is
 presentation only. **`Percent` is not clamped at 100** in the model; only `trayicon.Render` clamps,

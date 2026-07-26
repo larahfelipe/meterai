@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/larahfelipe/meterai/internal/quota"
 )
@@ -134,6 +136,39 @@ func TestFormatVerbsMatchAcrossCatalogues(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Catalogue text is the one class of caption the tray hands to a Windows menu
+// without neutralizing it first, since it is written here rather than read from a
+// document. That only holds while no translation carries a character the shell
+// interprets: an ampersand is consumed as a mnemonic marker and vanishes, and a
+// tab opens a column break that would throw a row's value out of its column.
+func TestNoCatalogueTextIsReinterpretedByTheShell(t *testing.T) {
+	for lang, catalog := range catalogs {
+		texts := make(map[string]string, len(catalog.messages)+len(catalog.meterLabels))
+		for key, message := range catalog.messages {
+			texts[key.String()] = message
+		}
+		for id, label := range catalog.meterLabels {
+			texts[string(id)] = label
+		}
+		for name, text := range texts {
+			if r := shellInterpretedRune(text); r != utf8.RuneError {
+				t.Errorf("catalogue %q entry %s carries %U: %q", lang, name, r, text)
+			}
+		}
+	}
+}
+
+// shellInterpretedRune reports the first character a Windows menu would act on
+// rather than draw, or utf8.RuneError when there is none.
+func shellInterpretedRune(text string) rune {
+	for _, r := range text {
+		if r == '&' || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return r
+		}
+	}
+	return utf8.RuneError
 }
 
 func TestMeterLabelsCoverEveryCatalogue(t *testing.T) {

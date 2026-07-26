@@ -16,14 +16,10 @@ import (
 )
 
 const (
-	// appTitle is the accessible name Windows announces for the icon. It is the
-	// product name and therefore not translated.
-	appTitle = "meterAI"
-
-	// maxDetailRows bounds the pre-allocated rows of the details submenu. It
-	// matches the number of account fields DetailRows can produce; like the meter
-	// rows, they exist from startup because systray cannot remove an item.
-	maxDetailRows = 3
+	// maxDetailRows bounds the pre-allocated rows of the details submenu. It is
+	// the ceiling DetailRows is tested against; like the meter rows, they exist
+	// from startup because systray cannot remove an item.
+	maxDetailRows = maxAccountRows
 
 	// maxMeterRows bounds the pre-allocated menu entries. systray can add items
 	// but never remove them, so the rows are created once at startup and hidden
@@ -45,7 +41,7 @@ func Run(ctx context.Context, wiring Wiring) error {
 }
 
 func onReady(ctx context.Context, wiring Wiring) {
-	systray.SetTitle(appTitle)
+	systray.SetTitle(AppName)
 	view := newMenuView(wiring)
 
 	// Choices arrive on their own channels because one select cannot span a
@@ -118,9 +114,12 @@ type menuView struct {
 	controller Controller
 	save       func(config.Config) error
 
-	header *systray.MenuItem
-	rows   []*systray.MenuItem
-	status *systray.MenuItem
+	// header and account are the two rows of the heading: the provider with its
+	// plan, and whose subscription it is under it.
+	header  *systray.MenuItem
+	account *systray.MenuItem
+	rows    []*systray.MenuItem
+	status  *systray.MenuItem
 	// details is the submenu parent; it stays hidden until there is at least one
 	// row under it, so the user never opens an empty submenu.
 	details    *systray.MenuItem
@@ -150,9 +149,12 @@ func newMenuView(wiring Wiring) *menuView {
 		controller: wiring.Controller,
 		save:       wiring.SaveSettings,
 	}
-	catalog := view.presenter.catalog
-
+	// The menu reads in four groups, one per separator: what is being monitored,
+	// what it currently reads, what can be done about it, and — held apart because
+	// it ends the process — Quit. A separator marks nothing else, and none of them
+	// can be hidden, which is why the heading always has a caption.
 	view.header = addReadout()
+	view.account = addReadout()
 	systray.AddSeparator()
 
 	view.rows = make([]*systray.MenuItem, maxMeterRows)
@@ -160,10 +162,14 @@ func newMenuView(wiring Wiring) *menuView {
 		view.rows[i] = addReadout()
 	}
 	systray.AddSeparator()
+
+	// The freshness of the data and the action that changes it belong together:
+	// the status line is the reason anyone reaches for Refresh.
 	view.status = systray.AddMenuItem("", "")
 	view.status.Disable()
+	view.refresh = systray.AddMenuItem("", "")
 
-	view.details = systray.AddMenuItem(catalog.Text(i18n.MenuDetails), catalog.Text(i18n.MenuDetailsTooltip))
+	view.details = systray.AddMenuItem("", "")
 	view.details.Hide()
 	view.detailRows = make([]*systray.MenuItem, maxDetailRows)
 	for i := range view.detailRows {
@@ -173,29 +179,37 @@ func newMenuView(wiring Wiring) *menuView {
 		view.detailRows[i] = item
 	}
 
-	view.settings = systray.AddMenuItem(catalog.Text(i18n.MenuSettings), catalog.Text(i18n.MenuSettingsTooltip))
-	view.intervalMenu = view.settings.AddSubMenuItem(catalog.Text(i18n.MenuInterval), catalog.Text(i18n.MenuIntervalTooltip))
+	view.settings = systray.AddMenuItem("", "")
+	view.intervalMenu = view.settings.AddSubMenuItem("", "")
 	presets := IntervalPresets()
 	view.intervalItems = make([]*systray.MenuItem, len(presets))
 	for i, preset := range presets {
 		view.intervalItems[i] = view.intervalMenu.AddSubMenuItemCheckbox(
 			view.presenter.IntervalLabel(preset), "", preset == view.currentInterval())
 	}
-	view.languageMenu = view.settings.AddSubMenuItem(catalog.Text(i18n.MenuLanguage), catalog.Text(i18n.MenuLanguageTooltip))
+	view.languageMenu = view.settings.AddSubMenuItem("", "")
 	languages := i18n.Available()
 	view.languageItems = make([]*systray.MenuItem, len(languages))
 	for i, lang := range languages {
 		view.languageItems[i] = view.languageMenu.AddSubMenuItemCheckbox(
-			lang.NativeName(), "", lang == catalog.Lang())
+			lang.NativeName(), "", lang == view.presenter.catalog.Lang())
 	}
 
-	view.refresh = systray.AddMenuItem(catalog.Text(i18n.MenuRefresh), catalog.Text(i18n.MenuRefreshTooltip))
 	systray.AddSeparator()
-	view.quit = systray.AddMenuItem(catalog.Text(i18n.MenuQuit), catalog.Text(i18n.MenuQuitTooltip))
+	view.quit = systray.AddMenuItem("", "")
+
+	// Every fixed caption is written in one place, by the same call that rewrites
+	// them all when the language changes.
+	view.retitle()
 	return view
 }
 
 // addReadout creates a row that displays a value rather than accepting a click.
+//
+// The tooltip argument is always empty: Windows popup menus have no per-item
+// hover text, and systray's own Windows backend drops it. Hover help would have
+// to be owner-drawn, which systray does not do, so every row has to say what it
+// means in its caption.
 func addReadout() *systray.MenuItem {
 	item := systray.AddMenuItem("", "")
 	item.Disable()
@@ -227,26 +241,26 @@ func (v *menuView) changeSettings(changed config.Config, err error) {
 	v.apply(v.controller.State(), time.Now())
 }
 
-// retitle rewrites every caption fixed at startup. It runs after a settings
-// change because language is the one setting that alters text the render path
-// does not rewrite on its own.
+// retitle rewrites every caption that is not rewritten by the render path: the
+// fixed commands, and the two settings rows that carry the value in force beside
+// their name. It runs at startup and after a settings change, because language is
+// the one setting that alters text apply never touches and a new cadence has to
+// reach the row that displays it.
 func (v *menuView) retitle() {
 	catalog := v.presenter.catalog
 	for _, item := range []struct {
-		widget  *systray.MenuItem
-		title   i18n.Key
-		tooltip i18n.Key
+		widget *systray.MenuItem
+		title  i18n.Key
 	}{
-		{v.details, i18n.MenuDetails, i18n.MenuDetailsTooltip},
-		{v.settings, i18n.MenuSettings, i18n.MenuSettingsTooltip},
-		{v.intervalMenu, i18n.MenuInterval, i18n.MenuIntervalTooltip},
-		{v.languageMenu, i18n.MenuLanguage, i18n.MenuLanguageTooltip},
-		{v.refresh, i18n.MenuRefresh, i18n.MenuRefreshTooltip},
-		{v.quit, i18n.MenuQuit, i18n.MenuQuitTooltip},
+		{v.details, i18n.MenuDetails},
+		{v.settings, i18n.MenuSettings},
+		{v.refresh, i18n.MenuRefresh},
+		{v.quit, i18n.MenuQuit},
 	} {
 		item.widget.SetTitle(catalog.Text(item.title))
-		item.widget.SetTooltip(catalog.Text(item.tooltip))
 	}
+	v.intervalMenu.SetTitle(MenuRowTitle(v.presenter.IntervalRow()))
+	v.languageMenu.SetTitle(MenuRowTitle(v.presenter.LanguageRow()))
 	for i, preset := range IntervalPresets() {
 		v.intervalItems[i].SetTitle(v.presenter.IntervalLabel(preset))
 	}
@@ -287,35 +301,41 @@ func (v *menuView) apply(state PollState, now time.Time) {
 	}
 	systray.SetTooltip(v.presenter.Tooltip(state, now))
 
-	rows := v.presenter.Rows(state, now)
-	for i, item := range v.rows {
-		if i >= len(rows) {
-			item.Hide()
-			continue
-		}
-		item.SetTitle(MenuRowTitle(rows[i]))
-		item.Show()
-	}
+	applyRows(v.rows, v.presenter.Rows(state, now))
 	v.status.SetTitle(v.presenter.StatusText(state, now))
 }
 
-func (v *menuView) applyAccount(state PollState, account *identity.Account) {
-	if header := v.presenter.HeaderText(state); header != "" {
-		v.header.SetTitle(header)
-		v.header.Show()
-	} else {
-		v.header.Hide()
-	}
-
-	rows := v.presenter.DetailRows(account)
-	for i, item := range v.detailRows {
+// applyRows fills a fixed block of pre-allocated items from a variable number of
+// rows. A row with nothing to say is hidden rather than left blank, and a provider
+// reporting more meters than the block holds shows the first of them, which is why
+// provider order is significant.
+func applyRows(items []*systray.MenuItem, rows []Row) {
+	for i, item := range items {
 		if i >= len(rows) {
 			item.Hide()
 			continue
 		}
-		item.SetTitle(MenuRowTitle(rows[i]))
-		item.Show()
+		setReadout(item, rows[i])
 	}
+}
+
+// setReadout shows a row, or hides the item when the row has no content at all.
+func setReadout(item *systray.MenuItem, row Row) {
+	title := MenuRowTitle(row)
+	if title == "" {
+		item.Hide()
+		return
+	}
+	item.SetTitle(title)
+	item.Show()
+}
+
+func (v *menuView) applyAccount(state PollState, account *identity.Account) {
+	setReadout(v.header, v.presenter.HeaderRow(state))
+	setReadout(v.account, v.presenter.AccountRow(account))
+
+	rows := v.presenter.DetailRows(account)
+	applyRows(v.detailRows, rows)
 	if len(rows) == 0 {
 		v.details.Hide()
 		return

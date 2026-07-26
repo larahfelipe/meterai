@@ -72,6 +72,10 @@ type Key uint8
 const (
 	MenuRefresh Key = iota + 1
 	MenuRefreshTooltip
+	MenuDetails
+	MenuDetailsTooltip
+	AccountEmail
+	AccountOrganization
 	MenuQuit
 	MenuQuitTooltip
 	RefreshRejected
@@ -100,6 +104,10 @@ const (
 var keyNames = [keyCount]string{
 	MenuRefresh:          "MenuRefresh",
 	MenuRefreshTooltip:   "MenuRefreshTooltip",
+	MenuDetails:          "MenuDetails",
+	MenuDetailsTooltip:   "MenuDetailsTooltip",
+	AccountEmail:         "AccountEmail",
+	AccountOrganization:  "AccountOrganization",
 	MenuQuit:             "MenuQuit",
 	MenuQuitTooltip:      "MenuQuitTooltip",
 	RefreshRejected:      "RefreshRejected",

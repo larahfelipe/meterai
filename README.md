@@ -137,8 +137,9 @@ Run `dist\meterAI.exe`. The icon appears in the notification area.
 - **Hovering** shows each quota window, its percentage, and the time to reset.
   The tooltip carries no gauges: the shell caps it at 127 characters, and ten
   cells per meter would push the status line out of it.
-- **Clicking** opens a menu with the same information plus a gauge per meter,
-  followed by *Refresh now* and *Quit*. A meter with no stated allowance, such as
+- **Clicking** opens a menu headed by the account and plan being monitored, then
+  a gauge per meter, a *Details* submenu carrying the account's e-mail and
+  organization, and finally *Refresh now* and *Quit*. A meter with no stated allowance, such as
   an uncapped balance, shows no gauge rather than an empty one.
 - The **icon colour** follows severity: green, amber, red.
 - The icon turns **grey** when the displayed figures are no longer being

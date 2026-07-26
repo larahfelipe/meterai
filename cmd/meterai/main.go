@@ -16,6 +16,7 @@ import (
 
 	"github.com/larahfelipe/meterai/internal/config"
 	"github.com/larahfelipe/meterai/internal/credential"
+	"github.com/larahfelipe/meterai/internal/identity"
 	"github.com/larahfelipe/meterai/internal/poll"
 	"github.com/larahfelipe/meterai/internal/provider/anthropic"
 	"github.com/larahfelipe/meterai/internal/singleton"
@@ -67,6 +68,9 @@ func run() (int, error) {
 
 	credentials := credential.NewCache(cfg.CredentialPath, credential.DefaultSkewMargin)
 	provider := anthropic.New(credentials, nil)
+	// Account details follow whichever credential the cache resolved, so the name
+	// on screen always belongs to the subscription being polled.
+	accounts := identity.NewCache(credentials)
 
 	// updates is a signal, not a queue: the UI always reads the newest state
 	// from the poller, so a dropped signal can never show a stale reading.
@@ -81,7 +85,7 @@ func run() (int, error) {
 	go poller.Run(ctx)
 
 	// tray.Run blocks and, on Windows, must own the main goroutine.
-	if err := tray.Run(ctx, cfg, updates, poller); err != nil && !errors.Is(err, context.Canceled) {
+	if err := tray.Run(ctx, cfg, updates, poller, accounts); err != nil && !errors.Is(err, context.Canceled) {
 		return 1, err
 	}
 	return 0, nil

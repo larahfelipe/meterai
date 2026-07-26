@@ -10,6 +10,10 @@ var enUS = &Catalog{
 	messages: map[Key]string{
 		MenuRefresh:          "Refresh now",
 		MenuRefreshTooltip:   "Forces an immediate poll",
+		MenuDetails:          "Details",
+		MenuDetailsTooltip:   "The account being monitored",
+		AccountEmail:         "E-mail",
+		AccountOrganization:  "Organization",
 		MenuQuit:             "Quit",
 		MenuQuitTooltip:      "Stops the monitor",
 		RefreshRejected:      "Polled too recently — wait a moment",

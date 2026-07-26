@@ -8,9 +8,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/larahfelipe/meterai/internal/config"
 	"github.com/larahfelipe/meterai/internal/i18n"
+	"github.com/larahfelipe/meterai/internal/identity"
 	"github.com/larahfelipe/meterai/internal/poll"
 	"github.com/larahfelipe/meterai/internal/quota"
 )
@@ -33,6 +36,9 @@ const (
 	// menuFieldGap separates a menu row's fields. Three spaces is what reads as a
 	// column break in the shell's proportional menu font.
 	menuFieldGap = "   "
+	// headerFieldGap joins the account name to the plan on the header row. The
+	// middle dot reads as a divider at any font size, unlike a hyphen.
+	headerFieldGap = " · "
 )
 
 // PollState aliases the poller's state so the platform-specific files in this
@@ -45,6 +51,17 @@ type PollState = poll.State
 type Controller interface {
 	State() poll.State
 	Refresh() bool
+}
+
+// AccountReader reports the account being monitored. It is consulted on every
+// update rather than once at startup because the credential path — and therefore
+// the account — is not known until the first successful poll.
+//
+// A nil account with a nil error means "not known yet". A non-nil error means the
+// account cannot be shown at all; the caller keeps rendering quota figures either
+// way, since neither case affects polling.
+type AccountReader interface {
+	Account() (*identity.Account, error)
 }
 
 // Row is one meter as presented in the menu: a name, a gauge, and its current
@@ -81,6 +98,63 @@ type Presenter struct {
 // NewPresenter builds a Presenter for a validated config.
 func NewPresenter(cfg config.Config) *Presenter {
 	return &Presenter{cfg: cfg, catalog: cfg.Catalog()}
+}
+
+// HeaderText names what is being monitored, in one row: who the account belongs
+// to and which plan it is on. It returns an empty string when neither is known
+// yet, so the row can be hidden rather than showing a bare separator.
+//
+// The account may be nil — it is unknown until the first credential read, and
+// stays unknown on an installation whose state document cannot be read.
+func (p *Presenter) HeaderText(state poll.State, account *identity.Account) string {
+	fields := make([]string, 0, 2)
+	if account != nil {
+		// The display name is the friendlier label, but an account that never set
+		// one is still identified by its address.
+		if account.DisplayName != "" {
+			fields = append(fields, account.DisplayName)
+		} else if account.Email != "" {
+			fields = append(fields, account.Email)
+		}
+	}
+	if state.Snapshot != nil && state.Snapshot.Plan != "" {
+		fields = append(fields, capitalizeFirst(state.Snapshot.Plan))
+	}
+	return strings.Join(fields, headerFieldGap)
+}
+
+// DetailRows are the account facts that answer "which subscription am I looking
+// at" without crowding the first level of the menu. Rows for fields the vendor
+// never supplied are omitted rather than rendered empty.
+func (p *Presenter) DetailRows(account *identity.Account) []Row {
+	if account == nil {
+		return nil
+	}
+	rows := make([]Row, 0, 2)
+	for _, field := range []struct {
+		key   i18n.Key
+		value string
+	}{
+		{i18n.AccountEmail, account.Email},
+		{i18n.AccountOrganization, account.Organization},
+	} {
+		if field.value == "" {
+			continue
+		}
+		rows = append(rows, Row{Label: p.catalog.Text(field.key), Detail: field.value})
+	}
+	return rows
+}
+
+// capitalizeFirst title-cases a vendor's plan label, which arrives lowercase
+// ("max", "pro"). Only the first rune is touched: the rest is the vendor's own
+// vocabulary and may carry capitals that matter.
+func capitalizeFirst(text string) string {
+	first, size := utf8.DecodeRuneInString(text)
+	if first == utf8.RuneError {
+		return text
+	}
+	return string(unicode.ToUpper(first)) + text[size:]
 }
 
 // Rows renders one line per meter in the last known snapshot, in the order the

@@ -8,6 +8,7 @@ import (
 
 	"github.com/larahfelipe/meterai/internal/config"
 	"github.com/larahfelipe/meterai/internal/i18n"
+	"github.com/larahfelipe/meterai/internal/identity"
 	"github.com/larahfelipe/meterai/internal/poll"
 	"github.com/larahfelipe/meterai/internal/quota"
 )
@@ -322,5 +323,102 @@ func TestIconStateMarksStaleOnFailure(t *testing.T) {
 	state.LastError = &quota.FetchError{Kind: quota.Transient, Err: errors.New("offline")}
 	if _, _, stale := NewPresenter(config.Default()).IconState(state); !stale {
 		t.Error("a failed poll must grey the icon")
+	}
+}
+
+func TestHeaderTextNamesTheAccountAndPlan(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangEnUS)
+	for name, tc := range map[string]struct {
+		account *identity.Account
+		state   poll.State
+		want    string
+	}{
+		"name and plan": {
+			&identity.Account{DisplayName: "Sample", Email: "sample@example.com"},
+			liveState(), "Sample · Pro",
+		},
+		"address stands in for a missing display name": {
+			&identity.Account{Email: "sample@example.com"},
+			liveState(), "sample@example.com · Pro",
+		},
+		"plan only while the account is unknown": {
+			nil, liveState(), "Pro",
+		},
+		"account only before the first poll": {
+			&identity.Account{DisplayName: "Sample"},
+			poll.State{}, "Sample",
+		},
+		"organization alone does not identify the account": {
+			&identity.Account{Organization: "Sample Org"},
+			poll.State{}, "",
+		},
+		"nothing known yet": {nil, poll.State{}, ""},
+		"snapshot without a plan": {
+			nil,
+			poll.State{Snapshot: &quota.Snapshot{Vendor: "anthropic"}},
+			"",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := presenter.HeaderText(tc.state, tc.account); got != tc.want {
+				t.Errorf("HeaderText() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHeaderTextCapitalizesOnlyTheFirstRune(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangEnUS)
+	for plan, want := range map[string]string{
+		"max":       "Max",
+		"pro":       "Pro",
+		"Max":       "Max",
+		"max_5x":    "Max_5x",
+		"étudiant":  "Étudiant",
+		"\xff":      "\xff",
+		"enterPris": "EnterPris",
+	} {
+		state := poll.State{Snapshot: &quota.Snapshot{Plan: plan}}
+		if got := presenter.HeaderText(state, nil); got != want {
+			t.Errorf("HeaderText() for plan %q = %q, want %q", plan, got, want)
+		}
+	}
+}
+
+func TestDetailRowsOmitFieldsTheVendorDidNotSupply(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangEnUS)
+
+	full := presenter.DetailRows(&identity.Account{
+		DisplayName: "Sample", Email: "sample@example.com", Organization: "Sample Org",
+	})
+	if len(full) != 2 {
+		t.Fatalf("rows = %d, want e-mail and organization", len(full))
+	}
+	if full[0].Label != "E-mail" || full[0].Detail != "sample@example.com" {
+		t.Errorf("row 0 = %+v", full[0])
+	}
+	if full[1].Label != "Organization" || full[1].Detail != "Sample Org" {
+		t.Errorf("row 1 = %+v", full[1])
+	}
+
+	// A personal account has no organization, and one with only a display name has
+	// nothing to put under Details at all.
+	personal := presenter.DetailRows(&identity.Account{Email: "sample@example.com"})
+	if len(personal) != 1 || personal[0].Detail != "sample@example.com" {
+		t.Errorf("personal rows = %+v", personal)
+	}
+	if rows := presenter.DetailRows(&identity.Account{DisplayName: "Sample"}); len(rows) != 0 {
+		t.Errorf("rows = %+v, want none when only the display name is known", rows)
+	}
+	if rows := presenter.DetailRows(nil); rows != nil {
+		t.Errorf("rows = %+v, want nil while the account is unknown", rows)
+	}
+}
+
+func TestDetailRowLabelsAreLocalized(t *testing.T) {
+	account := &identity.Account{Email: "sample@example.com", Organization: "Sample Org"}
+	rows := presenterFor(t, i18n.LangPtBR).DetailRows(account)
+	if len(rows) != 2 || rows[1].Label != "Organização" {
+		t.Errorf("pt-BR rows = %+v", rows)
 	}
 }

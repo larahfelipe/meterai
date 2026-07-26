@@ -28,12 +28,18 @@ toolchain. Do not add a dependency that needs CGO.
 ## Layering
 
 ```
-credential.Cache → provider/anthropic → poll.Poller → tray
-                        ↘ internal/quota ↙
+credential.Cache ─┬→ provider/anthropic → poll.Poller ─┬→ tray → i18n
+                  └→ identity.Cache ───────────────────┘
+                          ↘ internal/quota ↙
 ```
 
 Dependencies flow one way and converge on `internal/quota`, which imports no project package —
 changing it changes every layer above. `cmd/meterai/main.go` wires everything together.
+
+`identity.Cache` takes the credential path from `credential.Cache` rather than resolving a home
+directory, which is what keeps the account shown in the menu tied to the subscription being polled.
+It is read at most once per credential path and every failure is non-fatal: the account rows hide and
+polling continues.
 
 Vendor-specific knowledge stops inside `internal/provider/<vendor>/`. Never name that directory
 `vendor`: Go silently drops such a directory from build, vet and tests with no warning.
@@ -71,8 +77,13 @@ message. Change both or neither.
 releases even if the vendor renames its own field.
 
 **Meter order in a `Snapshot` is load-bearing.** It sets menu row order and decides which meters
-survive tooltip truncation at 127 runes and the fixed `maxMeterRows = 6` menu slots, since systray
-can add items but never remove them. Never sort it, never build it by iterating a map.
+survive tooltip truncation at 127 runes and the fixed `maxMeterRows = 6` menu slots. Never sort it,
+never build it by iterating a map.
+
+**Every menu item is allocated once in `onReady` and only ever shown or hidden** — meter rows, the
+account header and the `maxDetailRows` submenu rows — because systray can add an item but never
+remove one. A row with nothing to say is hidden, never left blank, and a submenu with no visible rows
+hides its parent too.
 
 **Money never passes through `float64`** — `quota.Money` is minor units and `Exponent` is
 presentation only. **`Percent` is not clamped at 100** in the model; only `trayicon.Render` clamps,

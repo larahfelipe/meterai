@@ -4,41 +4,110 @@ package tray
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/larahfelipe/meterai/internal/config"
 	"github.com/larahfelipe/meterai/internal/i18n"
+	"github.com/larahfelipe/meterai/internal/identity"
 	"github.com/larahfelipe/meterai/internal/poll"
 )
 
 func TestRenderWritesEveryMeterAndTheStatusLine(t *testing.T) {
 	var out bytes.Buffer
-	render(&out, presenterFor(t, i18n.LangEnUS), liveState(), now)
+	render(&out, presenterFor(t, i18n.LangEnUS), liveState(), nil, now)
 
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	// A blank line, the header, one line per meter, then the status line.
-	if len(lines) != 5 {
-		t.Fatalf("output has %d lines, want 5:\n%s", len(lines), out.String())
+	// A blank line, the timestamp banner, the plan header, one line per meter,
+	// then the status line.
+	if len(lines) != 6 {
+		t.Fatalf("output has %d lines, want 6:\n%s", len(lines), out.String())
 	}
 	if !strings.Contains(lines[1], "meterAI") || !strings.Contains(lines[1], now.Format("2006-01-02")) {
-		t.Errorf("header = %q, want the app name and the observation instant", lines[1])
+		t.Errorf("banner = %q, want the app name and the observation instant", lines[1])
 	}
-	if !strings.Contains(lines[2], "Session (5h)") || !strings.Contains(lines[2], "23%") {
-		t.Errorf("meter line = %q", lines[2])
+	if !strings.Contains(lines[3], "Session (5h)") || !strings.Contains(lines[3], "23%") {
+		t.Errorf("meter line = %q", lines[3])
 	}
-	if !strings.Contains(lines[4], "Updated") {
-		t.Errorf("status line = %q", lines[4])
+	if !strings.Contains(lines[5], "Updated") {
+		t.Errorf("status line = %q", lines[5])
+	}
+}
+
+func TestRenderWritesTheAccountItIsGiven(t *testing.T) {
+	var out bytes.Buffer
+	account := &identity.Account{DisplayName: "Sample", Email: "sample@example.com", Organization: "Sample Org"}
+	render(&out, presenterFor(t, i18n.LangEnUS), liveState(), account, now)
+
+	for _, want := range []string{"Sample · Pro", "sample@example.com", "Sample Org"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output does not carry %q:\n%s", want, out.String())
+		}
 	}
 }
 
 func TestRenderBeforeTheFirstPollWritesOnlyTheStatusLine(t *testing.T) {
 	var out bytes.Buffer
-	render(&out, presenterFor(t, i18n.LangEnUS), poll.State{}, now)
+	render(&out, presenterFor(t, i18n.LangEnUS), poll.State{}, nil, now)
 
 	if strings.Count(out.String(), "\n") != 3 {
 		t.Errorf("output = %q, want a blank line, a header and a status line", out.String())
 	}
 	if !strings.Contains(out.String(), "Polling…") {
 		t.Errorf("output = %q, does not disclose that no reading exists yet", out.String())
+	}
+}
+
+// stubController and stubAccounts stand in for the poller and the identity cache.
+type stubController struct{ state poll.State }
+
+func (s stubController) State() poll.State { return s.state }
+func (stubController) Refresh() bool       { return true }
+
+type stubAccounts struct {
+	account *identity.Account
+	err     error
+}
+
+func (s stubAccounts) Account() (*identity.Account, error) { return s.account, s.err }
+
+func TestRunRendersOnceAndUnwindsWithTheContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var out bytes.Buffer
+	cfg := config.Default()
+	err := run(ctx, &out, cfg, make(chan struct{}), stubController{state: liveState()},
+		stubAccounts{account: &identity.Account{DisplayName: "Sample"}})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run() = %v, want context.Canceled", err)
+	}
+	// The first reading is printed before the loop, so a cancelled context still
+	// produces output rather than exiting silently.
+	if !strings.Contains(out.String(), "Sample · Pro") {
+		t.Errorf("output = %q", out.String())
+	}
+}
+
+func TestRunReportsAnUnreadableAccountWithoutStopping(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var out bytes.Buffer
+	err := run(ctx, &out, config.Default(), make(chan struct{}), stubController{state: liveState()},
+		stubAccounts{err: errors.New("state document is unreadable")})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run() = %v, want context.Canceled", err)
+	}
+	if !strings.Contains(out.String(), "account details unavailable") {
+		t.Errorf("output does not disclose the failure: %q", out.String())
+	}
+	// Quota figures must survive an account that cannot be read.
+	if !strings.Contains(out.String(), "Session (5h)") {
+		t.Errorf("output lost the meter rows: %q", out.String())
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/larahfelipe/meterai/internal/config"
+	"github.com/larahfelipe/meterai/internal/identity"
 )
 
 // Run prints each state change to stderr instead of drawing a tray icon.
@@ -17,23 +18,44 @@ import (
 // The shipping target is Windows; this exists so the full pipeline —
 // credential discovery, polling, backoff, formatting — can be exercised on the
 // Linux development host, which is also where the credentials actually live.
-func Run(ctx context.Context, cfg config.Config, updates <-chan struct{}, controller Controller) error {
+func Run(ctx context.Context, cfg config.Config, updates <-chan struct{}, controller Controller, accounts AccountReader) error {
+	return run(ctx, os.Stderr, cfg, updates, controller, accounts)
+}
+
+// run takes its destination as a parameter so the loop can be exercised without
+// capturing the process's stderr.
+func run(ctx context.Context, w io.Writer, cfg config.Config, updates <-chan struct{}, controller Controller, accounts AccountReader) error {
 	presenter := NewPresenter(cfg)
-	render(os.Stderr, presenter, controller.State(), time.Now())
+	renderNow := func() {
+		// Unlike the tray, the development host reports why an account could not
+		// be read: it is the only place that failure is diagnosable.
+		account, err := accounts.Account()
+		if err != nil {
+			fmt.Fprintf(w, "meterAI: account details unavailable: %v\n", err)
+		}
+		render(w, presenter, controller.State(), account, time.Now())
+	}
+	renderNow()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-updates:
-			render(os.Stderr, presenter, controller.State(), time.Now())
+			renderNow()
 		}
 	}
 }
 
 // render takes its destination as a parameter so the headless output can be
 // asserted without capturing the process's stderr.
-func render(w io.Writer, presenter *Presenter, state PollState, now time.Time) {
+func render(w io.Writer, presenter *Presenter, state PollState, account *identity.Account, now time.Time) {
 	fmt.Fprintf(w, "\n[%s] meterAI\n", now.Format(time.RFC3339))
+	if header := presenter.HeaderText(state, account); header != "" {
+		fmt.Fprintf(w, "  %s\n", header)
+	}
+	for _, row := range presenter.DetailRows(account) {
+		fmt.Fprintf(w, "  %-16s %s\n", row.Label, row.Detail)
+	}
 	for _, row := range presenter.Rows(state, now) {
 		fmt.Fprintf(w, "  %-16s %-10s %s\n", row.Label, row.Bar, row.Detail)
 	}

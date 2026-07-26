@@ -7,6 +7,10 @@ var ptBR = &Catalog{
 	messages: map[Key]string{
 		MenuRefresh:          "Atualizar agora",
 		MenuRefreshTooltip:   "Força uma consulta imediata",
+		MenuDetails:          "Detalhes",
+		MenuDetailsTooltip:   "A conta monitorada",
+		AccountEmail:         "E-mail",
+		AccountOrganization:  "Organização",
 		MenuQuit:             "Sair",
 		MenuQuitTooltip:      "Encerra o monitor",
 		RefreshRejected:      "Consulta recente demais — aguarde um instante",

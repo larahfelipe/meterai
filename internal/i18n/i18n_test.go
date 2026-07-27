@@ -3,6 +3,7 @@ package i18n
 import (
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -241,7 +242,7 @@ func TestKeyStringNamesInvalidKeys(t *testing.T) {
 	}{
 		{MenuRefresh, "MenuRefresh"},
 		{0, "Key(0)"},
-		{keyCount, "Key(" + itoa(uint8(keyCount)) + ")"},
+		{keyCount, "Key(" + strconv.Itoa(int(keyCount)) + ")"},
 		{255, "Key(255)"},
 	} {
 		if got := tc.key.String(); got != tc.want {
@@ -287,18 +288,6 @@ func formatVerbs(message string) []string {
 		}
 	}
 	return verbs
-}
-
-func itoa(v uint8) string {
-	if v == 0 {
-		return "0"
-	}
-	var digits []byte
-	for v > 0 {
-		digits = append([]byte{byte('0' + v%10)}, digits...)
-		v /= 10
-	}
-	return string(digits)
 }
 
 func TestNativeNameOffersEveryLanguageInItsOwnWords(t *testing.T) {

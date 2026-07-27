@@ -114,6 +114,46 @@ func TestCacheReportsExpiredWhenDiskCopyIsAlsoStale(t *testing.T) {
 	}
 }
 
+// An access token no call site may use is exposure held for the life of the
+// process: the cache reports the expiry and keeps nothing.
+func TestCacheRetainsNoSecretItCannotUse(t *testing.T) {
+	expiry := time.Date(2026, 7, 25, 18, 30, 0, 0, time.UTC)
+	c, path, clock := newCacheOnFile(t, documentExpiringAt(expiry, "TOKEN-A"))
+
+	if _, err := c.Token(context.Background()); err != nil {
+		t.Fatalf("first Token: %v", err)
+	}
+	if c.current == nil {
+		t.Fatal("a usable token must be cached")
+	}
+
+	*clock = expiry.Add(time.Hour)
+	if _, err := c.Token(context.Background()); err == nil {
+		t.Fatal("an expired token on disk must be reported")
+	}
+	if c.current != nil {
+		t.Errorf("cache held %v past the point any caller could use it", c.current.ExpiresAt)
+	}
+	// The path survives the expiry: it is what locates the CLI's own documents,
+	// and the account behind a dead credential is still the one being described.
+	if c.Source() != path {
+		t.Errorf("Source = %q, want %q", c.Source(), path)
+	}
+
+	// A renewal on disk is picked up with nothing stale in the way.
+	renewed := time.Date(2026, 7, 26, 6, 0, 0, 0, time.UTC)
+	if err := os.WriteFile(path, documentExpiringAt(renewed, "TOKEN-B"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Token(context.Background())
+	if err != nil {
+		t.Fatalf("Token after renewal: %v", err)
+	}
+	if got.AccessToken.Reveal() != "TOKEN-B" {
+		t.Errorf("cache did not pick up the renewed token")
+	}
+}
+
 func TestCacheSurvivesTransientSourceOutage(t *testing.T) {
 	expiry := time.Date(2026, 7, 25, 23, 0, 0, 0, time.UTC)
 	c, path, clock := newCacheOnFile(t, documentExpiringAt(expiry, "TOKEN-A"))
@@ -188,4 +228,21 @@ func TestCacheIsConcurrencySafe(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// A source on this platform is always local, so nothing that reads the documents
+// beside it has a reason to hold back.
+func TestSourceIsRemoteOnTheDevelopmentHost(t *testing.T) {
+	expiry := time.Date(2026, 7, 25, 23, 0, 0, 0, time.UTC)
+	c, _, _ := newCacheOnFile(t, documentExpiringAt(expiry, "TOKEN-A"))
+
+	if c.SourceIsRemote() {
+		t.Error("SourceIsRemote = true before any path was resolved")
+	}
+	if _, err := c.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if c.SourceIsRemote() {
+		t.Error("a path on this host's own filesystem must not read as remote")
+	}
 }

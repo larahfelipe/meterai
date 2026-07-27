@@ -8,7 +8,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/larahfelipe/meterai/internal/config"
 	"github.com/larahfelipe/meterai/internal/i18n"
@@ -143,36 +142,6 @@ func TestRenderBeforeTheFirstPollWritesNoReading(t *testing.T) {
 			t.Errorf("settings block %q does not state the threshold %q", settings, want)
 		}
 	}
-}
-
-// stubController and stubCLI stand in for the poller and the identity cache.
-type stubController struct {
-	vendor string
-	state  poll.State
-}
-
-func (s stubController) Vendor() string          { return s.vendor }
-func (s stubController) State() poll.State       { return s.state }
-func (stubController) Refresh() bool             { return true }
-func (stubController) SetInterval(time.Duration) {}
-
-type stubCLI struct {
-	account    *identity.Account
-	accountErr error
-	prefs      *identity.Preferences
-	prefsErr   error
-}
-
-func (s stubCLI) Account() (*identity.Account, error) { return s.account, s.accountErr }
-
-func (s stubCLI) Preferences() (*identity.Preferences, error) { return s.prefs, s.prefsErr }
-
-// oneProvider is the wiring shape main.go builds, with the ports stubbed.
-func oneProvider(cli stubCLI) []ProviderWiring {
-	return []ProviderWiring{{
-		Controller: stubController{vendor: "anthropic", state: liveState()},
-		CLI:        cli,
-	}}
 }
 
 func TestRunRendersOnceAndUnwindsWithTheContext(t *testing.T) {

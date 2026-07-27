@@ -442,3 +442,42 @@ func TestIconStateMarksStaleOnFailure(t *testing.T) {
 		t.Error("a failed poll must grey the icon")
 	}
 }
+
+// stubController and stubCLI stand in for the poller and the identity cache.
+type stubController struct {
+	vendor string
+	state  poll.State
+}
+
+func (s stubController) Vendor() string          { return s.vendor }
+func (s stubController) State() poll.State       { return s.state }
+func (stubController) Refresh() bool             { return true }
+func (stubController) SetInterval(time.Duration) {}
+
+type stubCLI struct {
+	account    *identity.Account
+	accountErr error
+	prefs      *identity.Preferences
+	prefsErr   error
+	// invalidated is a pointer so a copy of this stub still counts against the
+	// same total: the wiring holds these by value.
+	invalidated *int
+}
+
+func (s stubCLI) Account() (*identity.Account, error) { return s.account, s.accountErr }
+
+func (s stubCLI) Preferences() (*identity.Preferences, error) { return s.prefs, s.prefsErr }
+
+func (s stubCLI) Invalidate() {
+	if s.invalidated != nil {
+		*s.invalidated++
+	}
+}
+
+// oneProvider is the wiring shape main.go builds, with the ports stubbed.
+func oneProvider(cli stubCLI) []ProviderWiring {
+	return []ProviderWiring{{
+		Controller: stubController{vendor: "anthropic", state: liveState()},
+		CLI:        cli,
+	}}
+}

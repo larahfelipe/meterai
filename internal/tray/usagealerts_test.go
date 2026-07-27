@@ -3,6 +3,7 @@ package tray
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -271,21 +272,12 @@ func assertUsable(t *testing.T, cfg config.Config, which string, chosen float64)
 	if alerts.WarnAtPercent >= alerts.CriticalAtPercent {
 		t.Errorf("%s %v produced the inverted pair %+v", which, chosen, alerts)
 	}
-	if !contains(WarnPresets(), alerts.WarnAtPercent) {
+	if !slices.Contains(WarnPresets(), alerts.WarnAtPercent) {
 		t.Errorf("%s %v left the warning threshold at %v, which its menu cannot tick", which, chosen, alerts.WarnAtPercent)
 	}
-	if !contains(CriticalPresets(), alerts.CriticalAtPercent) {
+	if !slices.Contains(CriticalPresets(), alerts.CriticalAtPercent) {
 		t.Errorf("%s %v left the critical threshold at %v, which its menu cannot tick", which, chosen, alerts.CriticalAtPercent)
 	}
-}
-
-func contains(presets []float64, want float64) bool {
-	for _, preset := range presets {
-		if preset == want {
-			return true
-		}
-	}
-	return false
 }
 
 // A rejected change must leave the caller holding the document it started with:
@@ -555,7 +547,7 @@ func TestACarriedCompanionThresholdIsPersistedToo(t *testing.T) {
 	}
 	// And it lands where its own submenu can tick it, so the menu after the
 	// restart is not showing a threshold with nothing marked.
-	if !contains(CriticalPresets(), reloaded.UsageAlerts.CriticalAtPercent) {
+	if !slices.Contains(CriticalPresets(), reloaded.UsageAlerts.CriticalAtPercent) {
 		t.Errorf("the carried critical %v is not an offered preset", reloaded.UsageAlerts.CriticalAtPercent)
 	}
 }

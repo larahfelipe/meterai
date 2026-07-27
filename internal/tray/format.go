@@ -67,6 +67,15 @@ const (
 	// menuMnemonicMarker is the character Windows consumes to mark the next one as
 	// an item's keyboard mnemonic. Doubling it is how a literal one is drawn.
 	menuMnemonicMarker = '&'
+	// maxMenuFieldRunes bounds one field of one caption. Nothing this app writes
+	// approaches it; what does reach it is text the app only reads. A display name
+	// and an organization are the vendor's own profile response by way of the CLI's
+	// state document, and a utilization percentage is a JSON number with no stated
+	// range — 1e300 renders as three hundred digits. A caption wider than the
+	// screen is a row nobody can read and a popup menu nobody can use, so the
+	// length is settled here, at the same hop that settles every other property of
+	// this text before the shell draws it.
+	maxMenuFieldRunes = 128
 )
 
 // PollState aliases the poller's state so the platform-specific files in this
@@ -102,6 +111,12 @@ type CLIReader interface {
 	// default, not the model a session is running: the CLI resolves that per
 	// session from sources this app cannot observe.
 	Preferences() (*identity.Preferences, error)
+	// Invalidate asks for one re-read of those documents. It is called from the
+	// Refresh command and from nowhere else: on an installation hosted inside
+	// WSL, reading them can start a stopped distribution, and the click is what
+	// turns that from a cost the app imposes into one the user asked for.
+	// Implementations must not block on the read they schedule.
+	Invalidate()
 }
 
 // ProviderWiring is one monitored provider's two ports: the poller driving it,
@@ -111,6 +126,31 @@ type CLIReader interface {
 type ProviderWiring struct {
 	Controller Controller
 	CLI        CLIReader
+}
+
+// refreshProviders asks every provider for an immediate poll and reports whether
+// any of them accepted. One provider still inside its manual-refresh floor does
+// not make the click a no-op for the others, so the caller states the rejection
+// only when nothing at all was requested.
+//
+// A provider that accepted also has its CLI documents invalidated. That click is
+// the only thing that re-reads them on an installation hosted inside WSL, where
+// the read can start a stopped distribution; tying it to acceptance rather than
+// to the click is what keeps a rejected burst from scheduling reads for polls
+// that will not happen.
+//
+// It is here rather than beside the widgets it is reached from because it is a
+// rule, not a widget: this way the one behaviour behind the Refresh command is
+// asserted on any host.
+func refreshProviders(providers []ProviderWiring) bool {
+	accepted := false
+	for _, provider := range providers {
+		if provider.Controller.Refresh() {
+			provider.CLI.Invalidate()
+			accepted = true
+		}
+	}
+	return accepted
 }
 
 // Wiring is everything the tray needs from the rest of the app. It is a struct
@@ -211,7 +251,11 @@ func MenuRowTitle(row Row) string {
 // reaches the shell verbatim, where an ampersand selects the character after it
 // as the item's keyboard mnemonic and vanishes from the caption, a tab opens a
 // column break of its own, and a bidirectional format character reorders the row
-// around it. None of that may be reachable from a document this app only reads.
+// around it. None of that may be reachable from a document this app only reads,
+// and neither may an unbounded length.
+//
+// The bound is applied after the substitutions rather than before, because
+// doubling every ampersand is itself a way to grow the field.
 func sanitizeMenuField(field string) string {
 	var safe strings.Builder
 	safe.Grow(len(field))
@@ -230,7 +274,7 @@ func sanitizeMenuField(field string) string {
 			safe.WriteRune(r)
 		}
 	}
-	return safe.String()
+	return truncateRunes(safe.String(), maxMenuFieldRunes)
 }
 
 // Presenter turns poll state into the text and icon inputs the platform layer

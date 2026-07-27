@@ -105,6 +105,26 @@ func Candidates(ctx context.Context, configuredPath string) ([]Candidate, error)
 	return out, nil
 }
 
+// wslLegacyUNCRoot is the prefix WSL used before wsl.localhost and still honours.
+// Nothing here builds one, but a user may well have pinned one in credentialPath,
+// and it reaches the same distribution at the same price.
+const wslLegacyUNCRoot = `\\wsl$`
+
+// isRemoteSource reports whether a path is served by a WSL distribution, and so
+// whether opening it can cost the boot of a stopped one rather than an open.
+//
+// Comparison is case-insensitive because these are Windows paths and the user may
+// have typed this one into the settings document by hand.
+func isRemoteSource(path string) bool {
+	for _, root := range [...]string{wslUNCRoot, wslLegacyUNCRoot} {
+		if len(path) > len(root) && strings.EqualFold(path[:len(root)], root) &&
+			(path[len(root)] == '\\' || path[len(root)] == '/') {
+			return true
+		}
+	}
+	return false
+}
+
 // readDirNames lists a directory's entry names. Reaching a stopped distribution
 // this way starts it, exactly as opening the credential file would.
 func readDirNames(dir string) ([]string, error) {

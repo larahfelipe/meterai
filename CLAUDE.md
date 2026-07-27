@@ -246,6 +246,12 @@ an organization, a vendor's own meter label. `&` is consumed as a mnemonic marke
 character opens a spurious column break, a `Cf` override reverses the row. Every field is
 neutralized there, and an i18n test asserts no catalogue string needs it.
 
+Length is settled at that same hop, by `maxMenuFieldRunes`. A display name and an organization are
+the vendor's own profile response by way of the CLI's state document, and a utilization percentage is
+a JSON number with no stated range — `1e300` renders as three hundred digits. Nothing this app writes
+comes near the bound; a caption wider than the screen is a popup menu nobody can use. The bound
+applies *after* the substitutions above, because doubling every `&` is itself a way to grow a field.
+
 ### 3.10 The two usage-alert thresholds are an ordered pair, and the menu keeps them so
 
 `quota.Thresholds` owns the whole rule — the defaults, the bounds, the
@@ -284,7 +290,15 @@ the same rule so the icon and the menu can never disagree.
   queue — the UI re-reads `Controller.State()`, so a coalesced signal cannot show stale data.
 - **Nothing the UI calls may block on I/O it did not ask for.** `credential.Cache.Source()` is
   atomic precisely because discovery can hold the cache lock for as long as starting a stopped WSL
-  distribution, and the tray reads it on every update.
+  distribution, and the tray reads it on every update. `identity.Cache` is the same shape for the
+  same reason: its accessors answer from an `atomic.Pointer`, the read runs on a goroutine of its
+  own, and a caller that asks before one has landed is told the answer is not known yet. The
+  goroutine is injected (`Cache.run`) so the caching rules are asserted inline, the way the clocks
+  below are.
+- **An announcement may only follow a real change.** `identity.Cache` redraws the UI when its
+  documents change, and that redraw is what asks for them again. Announcing every read — which
+  comparing errors by identity would do, since each failed read mints a new value — would make the
+  UI schedule the read that notified it, forever.
 - **Time is injected, never called:** `Poller.now`/`Poller.after`, `Cache.now`,
   `anthropic.Provider.now`, and explicit `now` parameters throughout `internal/tray`. Keep new code
   in this shape or its tests become clock-dependent.
@@ -309,12 +323,29 @@ because a sentence still reads when cut short.
 
 `identity.Cache` takes the credential path from `credential.Cache` rather than resolving a home
 directory, which is what keeps the account shown in the menu tied to the subscription being polled.
-It reads two documents with different policies:
+It reads two documents, and **when it re-reads them is decided by what the read costs**, which is the
+second thing it takes from `credential.Cache`: `SourceIsRemote()` reports whether the credential file
+is served by another operating system. `identity` never learns what that system is — it reads the
+price off that one call, and the knowledge of what a `\\wsl.localhost` path is stays in
+`internal/credential`, which owns it.
 
-- `.claude.json` (the account) at most once per credential path, since it changes only on
-  re-authentication.
-- `.claude/settings.json` (the configured model and effort) on every call, since the user can
-  rewrite it at any moment.
+- `.claude.json` (the account) at most once per credential path, whatever the price, since it
+  changes only on re-authentication and the CLI caches remote feature flags in the same file.
+- `.claude/settings.json` (the configured model and effort) on every call **from a local source**,
+  where the price is an open and a model changed in the CLI should reach the menu on the next poll.
+- From a **remote** source, neither is re-read on a cadence. Opening a path under a WSL distribution
+  starts that distribution if it is stopped, and a five-minute cadence would keep another operating
+  system awake to redraw a decorative row. `credential.Cache` already refuses to re-read the
+  credential itself for exactly this reason; a caption must not undo that.
+
+`Cache.Invalidate()` is what re-reads a remote source, and it is reached from the Refresh command and
+from nowhere else: the click turns a possible virtual-machine boot from a cost the app imposes into
+one the user asked for. It re-reads **both** documents, the account included — signing out and back
+in as somebody else rewrites that document in place, leaving the path unchanged, so the per-path rule
+above would otherwise never notice. The rule lives in `tray.refreshProviders` rather than beside the
+widgets, so the one behaviour behind that click is testable on any host, and it invalidates only the
+providers that accepted the poll: re-reading for a poll that will not happen pays the boot for
+nothing.
 
 Both are read independently, both reads are size-bounded, and every failure is non-fatal: one
 document failing hides its own rows only, and polling continues either way.

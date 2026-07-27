@@ -68,19 +68,25 @@ func run() (int, error) {
 
 	credentials := credential.NewCache(cfg.CredentialPath, credential.DefaultSkewMargin)
 	provider := anthropic.New(credentials, nil)
-	// Account details follow whichever credential the cache resolved, so the name
-	// on screen always belongs to the subscription being polled.
-	accounts := identity.NewCache(credentials)
 
 	// updates is a signal, not a queue: the UI always reads the newest state
-	// from the poller, so a dropped signal can never show a stale reading.
+	// from its sources, so a dropped signal can never show a stale reading.
 	updates := make(chan struct{}, 1)
-	poller := poll.New(provider, time.Duration(cfg.PollInterval), func(poll.State) {
+	redraw := func() {
 		select {
 		case updates <- struct{}{}:
 		default:
 		}
-	})
+	}
+
+	// Account details follow whichever credential the cache resolved, so the name
+	// on screen always belongs to the subscription being polled. The cache reads
+	// off the UI's goroutine and announces itself here, on the same signal the
+	// poller uses: a document that lands between two polls is drawn when it lands
+	// rather than at the next one.
+	accounts := identity.NewCache(credentials, redraw)
+
+	poller := poll.New(provider, time.Duration(cfg.PollInterval), func(poll.State) { redraw() })
 
 	go poller.Run(ctx)
 

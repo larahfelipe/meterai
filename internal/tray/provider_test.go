@@ -335,3 +335,73 @@ func TestSubscriptionsActive(t *testing.T) {
 		t.Errorf("Active() on an empty list = %+v, want the zero subscription", got)
 	}
 }
+
+// refreshingController records what the Refresh command asked of it, and answers
+// the way a poller inside its manual-refresh floor does when told to.
+type refreshingController struct {
+	stubController
+	accept    bool
+	refreshed *int
+}
+
+func (c refreshingController) Refresh() bool {
+	*c.refreshed++
+	return c.accept
+}
+
+// The Refresh command is the only thing that re-reads a vendor's CLI documents
+// on an installation hosted inside WSL, where that read can start a stopped
+// distribution. It must reach every provider, and only the ones that will
+// actually poll.
+func TestRefreshProvidersInvalidatesOnlyWhatWillBePolled(t *testing.T) {
+	var firstRefreshed, secondRefreshed, firstInvalidated, secondInvalidated int
+	providers := []ProviderWiring{
+		{
+			Controller: refreshingController{stubController{vendor: "anthropic"}, false, &firstRefreshed},
+			CLI:        stubCLI{invalidated: &firstInvalidated},
+		},
+		{
+			Controller: refreshingController{stubController{vendor: "other"}, true, &secondRefreshed},
+			CLI:        stubCLI{invalidated: &secondInvalidated},
+		},
+	}
+
+	// One provider accepting is enough: the click was not a no-op.
+	if !refreshProviders(providers) {
+		t.Error("refreshProviders reported nothing was requested")
+	}
+	if firstRefreshed != 1 || secondRefreshed != 1 {
+		t.Errorf("polls requested = %d and %d, want one each", firstRefreshed, secondRefreshed)
+	}
+	// The rejected provider will not poll, so re-reading its documents would pay
+	// for a boot with nothing behind it.
+	if firstInvalidated != 0 {
+		t.Errorf("a provider that rejected the poll was invalidated %d times", firstInvalidated)
+	}
+	if secondInvalidated != 1 {
+		t.Errorf("invalidations = %d, want exactly one for the provider that accepted", secondInvalidated)
+	}
+}
+
+// Every provider rejecting is what puts the "polled too recently" line on screen,
+// and nothing may be re-read on the way there.
+func TestRefreshProvidersReportsAnEntirelyRejectedClick(t *testing.T) {
+	var refreshed, invalidated int
+	providers := []ProviderWiring{{
+		Controller: refreshingController{stubController{vendor: "anthropic"}, false, &refreshed},
+		CLI:        stubCLI{invalidated: &invalidated},
+	}}
+
+	if refreshProviders(providers) {
+		t.Error("refreshProviders accepted a click every provider rejected")
+	}
+	if invalidated != 0 {
+		t.Errorf("invalidations = %d, want none", invalidated)
+	}
+}
+
+func TestRefreshProvidersWithoutProviders(t *testing.T) {
+	if refreshProviders(nil) {
+		t.Error("refreshProviders reported a request with no provider to make it of")
+	}
+}

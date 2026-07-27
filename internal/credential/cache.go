@@ -71,13 +71,21 @@ func (c *Cache) Token(ctx context.Context) (*Credentials, error) {
 		return nil, err
 	}
 
-	c.current = fresh
+	// The path is recorded even for a token that turns out to be unusable: it is
+	// what locates the CLI's own documents, and the account behind an expired
+	// credential is still the account this app is describing.
 	source := fresh.Source
 	c.resolvedPath.Store(&source)
+
 	if !fresh.IsUsableAt(c.now(), c.skewMargin) {
+		// Nothing here can authenticate a request, and an access token no call
+		// site may use is exposure held for the life of the process: the previous
+		// one is dropped rather than joined by a second dead secret.
+		c.current = nil
 		return nil, &Failure{Kind: Expired, Path: fresh.Source,
 			Err: errors.New("the credential file on disk holds an expired access token; run the claude CLI once to renew it")}
 	}
+	c.current = fresh
 	return fresh, nil
 }
 
@@ -106,3 +114,13 @@ func (c *Cache) Source() string {
 	}
 	return ""
 }
+
+// SourceIsRemote reports whether the resolved credential file is served by
+// another operating system rather than by this one's own filesystem.
+//
+// It exists so that a reader of the documents beside that file can tell a read
+// that costs an open from one that can cost the boot of a stopped WSL
+// distribution, without learning what WSL is: the two are the same call and
+// differ only in price, and a price that large is the caller's decision to make.
+// It takes no lock, for the same reason Source does not.
+func (c *Cache) SourceIsRemote() bool { return isRemoteSource(c.Source()) }

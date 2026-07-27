@@ -221,6 +221,15 @@ func Save(path string, cfg Config) error {
 		_ = temp.Close()
 		return fmt.Errorf("write temporary config: %w", err)
 	}
+	// The rename is atomic with respect to the directory, but only a file whose
+	// contents already reached the disk makes that atomicity mean anything:
+	// without this, a crash between the rename and the writeback can leave the
+	// entry pointing at a zero-length file, which is the truncated document this
+	// whole path exists to make impossible.
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("flush temporary config: %w", err)
+	}
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("close temporary config: %w", err)
 	}

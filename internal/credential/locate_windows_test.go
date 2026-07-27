@@ -115,3 +115,49 @@ func TestWSLCandidatesStayInsideTheirDistribution(t *testing.T) {
 		}
 	}
 }
+
+// Whether a source is remote decides whether the documents beside it are re-read
+// on a cadence or only when the user asks, so a path that reaches a distribution
+// must be recognized in every form one can be written in.
+//
+// The distribution names are deliberately all different: this classifier reads
+// the root and the separator after it and nothing else, and a table written
+// entirely against one distribution could not tell that apart from a table that
+// simply never tried another. Validating the name itself is isPlainName's job,
+// one layer earlier, before it ever becomes part of a path.
+func TestIsRemoteSourceRecognizesEveryWSLRootWhateverTheDistribution(t *testing.T) {
+	for path, want := range map[string]bool{
+		`\\wsl.localhost\Ubuntu-24.04\home\sample\.claude\.credentials.json`:    true,
+		`\\WSL.LOCALHOST\kali-linux\home\sample\.claude\.credentials.json`:      true,
+		`\\wsl$\openSUSE-Tumbleweed\home\sample\.claude\.credentials.json`:      true,
+		`\\wsl.localhost/Debian/home/sample/.claude/.credentials.json`:          true,
+		`\\wsl.localhost\Imported Distro\home\sample\.claude\.credentials.json`: true,
+		`\\wsl.localhost\Ubuntu-Ação\home\sample\.claude\.credentials.json`:     true,
+		// Filtered out of enumeration as a system distribution, but a path pinned
+		// into one by hand still costs what any other distribution costs.
+		`\\wsl.localhost\docker-desktop\home\sample\.claude\.credentials.json`: true,
+		`C:\Users\sample\.claude\.credentials.json`:                            false,
+		`\\fileserver\share\.claude\.credentials.json`:                         false,
+		// The bare roots name no file and reach no distribution.
+		`\\wsl.localhost`: false,
+		`\\wsl$`:          false,
+		``:                false,
+		// A host whose name merely starts like the root is not the root.
+		`\\wsl.localhost.example.com\share\.credentials.json`: false,
+	} {
+		if got := isRemoteSource(path); got != want {
+			t.Errorf("isRemoteSource(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
+// The same file under a set of distributions has to classify identically, which
+// is the property the table above samples and this one states outright.
+func TestIsRemoteSourceIgnoresTheDistributionName(t *testing.T) {
+	const suffix = `\home\sample\.claude\.credentials.json`
+	for _, distro := range []string{"Ubuntu", "Debian", "kali-linux", "Ubuntu-24.04", "NixOS", "Imported Distro", "x"} {
+		if !isRemoteSource(wslUNCRoot + `\` + distro + suffix) {
+			t.Errorf("distribution %q was not recognized as remote", distro)
+		}
+	}
+}

@@ -24,17 +24,23 @@ const (
 	OriginNativeHome
 )
 
-// Candidate is one place credentials may live.
+// Candidate is one place credentials may live. It carries no distribution name:
+// nothing on this platform is reached through another operating system, which is
+// the whole of what the Windows build needs that field for.
 type Candidate struct {
 	Path   string
 	Origin Origin
-	Distro string
 }
 
 const (
 	credentialFileName  = ".credentials.json"
 	claudeConfigDirName = ".claude"
 )
+
+// isRemoteSource reports whether opening a path can cost more than an open.
+// Nothing on this platform is reached through another operating system: the
+// development host reads its own filesystem, and the price is always the same.
+func isRemoteSource(string) bool { return false }
 
 // Candidates returns probe paths in decreasing order of confidence.
 func Candidates(_ context.Context, configuredPath string) ([]Candidate, error) {

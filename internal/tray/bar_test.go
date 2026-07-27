@@ -241,6 +241,40 @@ func TestMenuRowTitleNeutralizesWhatTheShellWouldInterpret(t *testing.T) {
 	}
 }
 
+// A display name and an organization are the vendor's own profile response by way
+// of the CLI's state document, and a utilization percentage is a JSON number with
+// no stated range. None of that is this app's text, and a caption the width of the
+// screen is a popup menu nobody can use.
+func TestMenuRowTitleBoundsTheLengthOfEveryField(t *testing.T) {
+	long := strings.Repeat("o", maxMenuFieldRunes*4)
+	for name, row := range map[string]Row{
+		"an organization from the CLI's state document": {Label: "Organization", Detail: long},
+		"a vendor label the app only reads":             {Label: long, Detail: "23%"},
+		"a percentage with no stated range":             {Label: "Session (5h)", Detail: long, Bar: long},
+	} {
+		t.Run(name, func(t *testing.T) {
+			title := MenuRowTitle(row)
+			for _, field := range strings.Split(title, menuRightAlign) {
+				if got := utf8.RuneCountInString(field); got > maxMenuFieldRunes*2+len(menuValueGap) {
+					t.Errorf("MenuRowTitle(%+v) drew a %d-rune column", row, got)
+				}
+			}
+			if !strings.Contains(title, ellipsis) {
+				t.Errorf("MenuRowTitle(%+v) = %q, want the truncation to be visible", row, title)
+			}
+		})
+	}
+}
+
+// The bound is applied after the substitutions, because doubling every ampersand
+// is itself a way to grow a field past it.
+func TestMenuRowTitleBoundsAFieldThatGrowsWhileBeingNeutralized(t *testing.T) {
+	row := Row{Label: strings.Repeat("&", maxMenuFieldRunes)}
+	if got := utf8.RuneCountInString(MenuRowTitle(row)); got > maxMenuFieldRunes {
+		t.Errorf("MenuRowTitle(%+v) = %d runes, want at most %d", row, got, maxMenuFieldRunes)
+	}
+}
+
 // Whatever a provider or the CLI's own state document puts in a row, the caption
 // must still carry exactly the one column break the layout puts there.
 func TestMenuRowTitleKeepsOneColumnBreakUnderHostileInput(t *testing.T) {

@@ -69,7 +69,7 @@ func onReady(ctx context.Context, wiring Wiring) {
 				systray.Quit()
 				return
 			case <-view.refresh.ClickedCh:
-				if !view.refreshAll() {
+				if !refreshProviders(view.providers) {
 					// Replacing the status line acknowledges the click, which
 					// would otherwise look like nothing happened.
 					view.status.SetTitle(view.presenter.catalog.Text(i18n.RefreshRejected))
@@ -316,20 +316,6 @@ func (v *menuView) subscriptions() Subscriptions {
 		})
 	}
 	return subs
-}
-
-// refreshAll asks every provider for an immediate poll, and reports whether any
-// of them accepted. One provider still inside its manual-refresh floor does not
-// make the click a no-op for the others, so the rejection message is shown only
-// when nothing at all was requested.
-func (v *menuView) refreshAll() bool {
-	accepted := false
-	for _, provider := range v.providers {
-		if provider.Controller.Refresh() {
-			accepted = true
-		}
-	}
-	return accepted
 }
 
 // changeSettings persists a settings change and applies it to the running app. A

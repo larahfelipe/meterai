@@ -84,7 +84,10 @@ Run `meterAI.exe`. The icon appears in the notification area.
   - the app and its release, then the provider being monitored, what its CLI is
     configured to use, and one row per quota window;
   - _Updated…_ and _Refresh now_, together because the first is the reason for
-    the second;
+    the second. On an installation that lives inside WSL, _Refresh now_ is also
+    what re-reads the account and the configured model: opening a file in a
+    stopped distribution starts it, and that is a cost to pay when you ask for
+    it, not every few minutes to redraw a caption;
   - _Providers_, _Settings_ and _Quit_.
 - **Providers** lists every monitored subscription by name, one entry each, and
   opens on the plan and the account behind it — name, e-mail, organization.
@@ -188,7 +191,8 @@ it is redacted by its own type in every rendered form, its single reveal site is
 the outbound `Authorization` header, the refresh token is never carried into
 memory at all, and no code path writes to the credential file. Every read from a
 file, a socket or a child process is size-bounded, and text coming from documents
-the app only reads is neutralized before it reaches a menu caption.
+the app only reads is neutralized and length-bounded before it reaches a menu
+caption.
 
 ## Development
 

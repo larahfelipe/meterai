@@ -8,19 +8,21 @@ import "github.com/larahfelipe/meterai/internal/quota"
 var enUS = &Catalog{
 	lang: LangEnUS,
 	messages: map[Key]string{
-		MenuRefresh:          "Refresh now",
-		MenuDetails:          "Details",
-		MenuSettings:         "Settings",
-		MenuInterval:         "Update every",
-		MenuLanguage:         "Language",
-		IntervalMinutes:      "%d min",
-		IntervalHours:        "%d h",
-		SettingsSaveFailed:   "Settings could not be saved — check the config file",
-		AccountName:          "Account",
-		AccountEmail:         "E-mail",
-		AccountOrganization:  "Organization",
-		PreferredModel:       "Default model",
-		PreferredEffort:      "Default effort",
+		MenuRefresh:         "Refresh now",
+		MenuProviders:       "Providers",
+		MenuSettings:        "Settings",
+		MenuInterval:        "Update every",
+		MenuLanguage:        "Language",
+		IntervalMinutes:     "%d min",
+		IntervalHours:       "%d h",
+		SettingsSaveFailed:  "Settings could not be saved — check the config file",
+		AccountName:         "Account",
+		AccountEmail:        "E-mail",
+		AccountOrganization: "Organization",
+		// The configured value is interpolated title-cased, so the qualifier around
+		// it carries the same case: the row is one label, not a sentence, and
+		// "High" alone names nothing.
+		EffortLevel:          "%s Effort",
 		MenuQuit:             "Quit",
 		RefreshRejected:      "Polled too recently — wait a moment",
 		MeterResetSuffix:     "· resets in %s",
@@ -32,13 +34,16 @@ var enUS = &Catalog{
 		CountdownDays:        "%dd%02dh",
 		StatusFirstPoll:      "Polling…",
 		StatusUpdated:        "Updated %s ago · next in %s",
-		StatusStale:          "(data from %s ago)",
-		ErrorUnauthorized:    "Credential expired — run `claude` once to renew it",
-		ErrorRateLimited:     "Request limit reached — waiting",
-		ErrorTransient:       "No response from the API — retrying",
-		ErrorProtocol:        "The API changed shape — the app needs an update",
-		ErrorUnrecognized:    "Polling failed",
-		ErrorUnexpected:      "Unexpected failure while polling",
+		// StatusUpdatedBrief is the same fact inside the tooltip, where the whole
+		// text has 63 characters to work with and the cadence is one setting away.
+		StatusUpdatedBrief: "Updated %s ago",
+		StatusStale:        "(data from %s ago)",
+		ErrorUnauthorized:  "Credential expired — run `claude` once to renew it",
+		ErrorRateLimited:   "Request limit reached — waiting",
+		ErrorTransient:     "No response from the API — retrying",
+		ErrorProtocol:      "The API changed shape — the app needs an update",
+		ErrorUnrecognized:  "Polling failed",
+		ErrorUnexpected:    "Unexpected failure while polling",
 	},
 	// The keys are the MeterIDs the providers mint and persist; they are matched
 	// literally here so this package never imports a provider.

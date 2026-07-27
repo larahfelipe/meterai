@@ -85,11 +85,14 @@ func run() (int, error) {
 	go poller.Run(ctx)
 
 	// tray.Run blocks and, on Windows, must own the main goroutine.
+	//
+	// Providers is a list because the menu is built from one: a second vendor is
+	// another poller and another CLI reader appended here, and nothing in the UI
+	// changes shape to accommodate it.
 	wiring := tray.Wiring{
-		Config:     cfg,
-		Updates:    updates,
-		Controller: poller,
-		CLI:        accounts,
+		Config:    cfg,
+		Updates:   updates,
+		Providers: []tray.ProviderWiring{{Controller: poller, CLI: accounts}},
 		// The tray hands back a whole validated document; only the path stays here.
 		SaveSettings: func(changed config.Config) error { return config.Save(configPath, changed) },
 	}

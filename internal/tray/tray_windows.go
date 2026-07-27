@@ -11,24 +11,21 @@ import (
 
 	"github.com/larahfelipe/meterai/internal/config"
 	"github.com/larahfelipe/meterai/internal/i18n"
-	"github.com/larahfelipe/meterai/internal/identity"
 	"github.com/larahfelipe/meterai/internal/trayicon"
 )
 
-const (
-	// maxMeterRows bounds the pre-allocated menu entries. systray can add items
-	// but never remove them, so the rows are created once at startup and hidden
-	// while unused; a provider reporting more meters than this shows the first
-	// maxMeterRows, which is why provider order is significant.
-	maxMeterRows = 6
-)
+// maxMeterRows bounds the pre-allocated meter entries. systray can add items but
+// never remove them, so the rows are created once at startup and hidden while
+// unused; a provider reporting more meters than this shows the first
+// maxMeterRows, which is why provider order is significant.
+const maxMeterRows = 6
 
 // Run displays the tray icon and blocks until the user quits or ctx is
 // cancelled. It must be called from the main goroutine: systray locks the OS
 // thread that owns the Windows message loop.
 func Run(ctx context.Context, wiring Wiring) error {
 	systray.Run(func() { onReady(ctx, wiring) }, func() {
-		// Nothing to undo here: systray removes the icon itself, and the poller
+		// Nothing to undo here: systray removes the icon itself, and the pollers
 		// and the single-instance guard are unwound by the caller once Run
 		// returns.
 	})
@@ -51,7 +48,7 @@ func onReady(ctx context.Context, wiring Wiring) {
 		forwardChoice(ctx, view.languageItems[i].ClickedCh, languageChosen, lang)
 	}
 
-	view.apply(wiring.Controller.State(), time.Now())
+	view.apply(time.Now())
 
 	go func() {
 		for {
@@ -63,7 +60,7 @@ func onReady(ctx context.Context, wiring Wiring) {
 				systray.Quit()
 				return
 			case <-view.refresh.ClickedCh:
-				if !wiring.Controller.Refresh() {
+				if !view.refreshAll() {
 					// Replacing the status line acknowledges the click, which
 					// would otherwise look like nothing happened.
 					view.status.SetTitle(view.presenter.catalog.Text(i18n.RefreshRejected))
@@ -73,7 +70,7 @@ func onReady(ctx context.Context, wiring Wiring) {
 			case lang := <-languageChosen:
 				view.changeSettings(WithLanguage(view.presenter.Config(), lang))
 			case <-wiring.Updates:
-				view.apply(wiring.Controller.State(), time.Now())
+				view.apply(time.Now())
 			}
 		}
 	}()
@@ -99,26 +96,47 @@ func forwardChoice[T any](ctx context.Context, clicked <-chan struct{}, chosen c
 	}()
 }
 
+// providerEntry is one provider's row in the provider list, and the account
+// submenu behind it. Exactly one is allocated per configured provider, so a
+// second vendor adds an entry to this slice and changes nothing else about the
+// menu.
+type providerEntry struct {
+	// row opens the submenu and carries the provider's own name and plan, the
+	// same grammar the active provider uses at the first level.
+	row *systray.MenuItem
+	// context repeats that name inside the submenu, so a list of several
+	// providers cannot leave the user reading account fields with no idea whose.
+	context     *systray.MenuItem
+	accountRows []*systray.MenuItem
+}
+
 // menuView owns the mutable tray widgets. Every method runs on the single
 // goroutine started in onReady, so the fields need no synchronization.
 type menuView struct {
 	presenter *Presenter
-	cli       CLIReader
-	// controller and save apply a settings change to the running poller and to
-	// disk; the tray never learns where the config file lives.
-	controller Controller
-	save       func(config.Config) error
+	providers []ProviderWiring
+	// save persists a settings change; the tray never learns where the config
+	// file lives.
+	save func(config.Config) error
 
-	// header and account are the two rows of the heading: the provider with its
-	// plan, and whose subscription it is under it.
-	header  *systray.MenuItem
-	account *systray.MenuItem
-	rows    []*systray.MenuItem
+	// The first group states what the app is and what it is currently reading:
+	// the app and its release, the active provider, what that provider's CLI is
+	// configured to use, then one row per quota window.
+	header   *systray.MenuItem
+	provider *systray.MenuItem
+	prefs    *systray.MenuItem
+	meters   []*systray.MenuItem
+
+	// The second group is the freshness of those figures and the one action that
+	// changes it. They belong together: the status line is the reason anyone
+	// reaches for Refresh.
 	status  *systray.MenuItem
-	// details is the submenu parent; it stays hidden until there is at least one
-	// row under it, so the user never opens an empty submenu.
-	details    *systray.MenuItem
-	detailRows []*systray.MenuItem
+	refresh *systray.MenuItem
+
+	// The third group is navigation, and everything in it opens somewhere else or
+	// ends the session.
+	providersMenu *systray.MenuItem
+	providerRows  []providerEntry
 
 	settings      *systray.MenuItem
 	intervalMenu  *systray.MenuItem
@@ -126,8 +144,7 @@ type menuView struct {
 	languageMenu  *systray.MenuItem
 	languageItems []*systray.MenuItem
 
-	refresh *systray.MenuItem
-	quit    *systray.MenuItem
+	quit *systray.MenuItem
 
 	// lastIcon suppresses redundant SetIcon calls: the gauge quantizes to whole
 	// rows, so most polls render identical bytes.
@@ -137,41 +154,41 @@ type menuView struct {
 // newMenuView allocates every widget the menu will ever show. Nothing is created
 // afterwards: systray can add an item but never remove one, so a row with nothing
 // to say is hidden instead.
+//
+// The provider list is the one part sized from configuration rather than from a
+// constant, because the set of providers is fixed for the life of the process
+// while the meters each of them reports is not.
 func newMenuView(wiring Wiring) *menuView {
 	view := &menuView{
-		presenter:  NewPresenter(wiring.Config),
-		cli:        wiring.CLI,
-		controller: wiring.Controller,
-		save:       wiring.SaveSettings,
+		presenter: NewPresenter(wiring.Config),
+		providers: wiring.Providers,
+		save:      wiring.SaveSettings,
 	}
-	// The menu reads in four groups, one per separator: what is being monitored,
-	// what it currently reads, what can be done about it, and — held apart because
-	// it ends the process — Quit. A separator marks nothing else, and none of them
-	// can be hidden, which is why the heading always has a caption.
+
+	// Four separators, four groups: what the app is, what it is reading, how
+	// fresh that reading is, and where to go next. None of them can be hidden,
+	// which is why the heading names the app — always present — and why the group
+	// under it always opens with a provider named from its own key.
 	view.header = addReadout()
-	view.account = addReadout()
 	systray.AddSeparator()
 
-	view.rows = make([]*systray.MenuItem, maxMeterRows)
-	for i := range view.rows {
-		view.rows[i] = addReadout()
+	view.provider = addReadout()
+	view.prefs = addReadout()
+	view.meters = make([]*systray.MenuItem, maxMeterRows)
+	for i := range view.meters {
+		view.meters[i] = addReadout()
 	}
 	systray.AddSeparator()
 
-	// The freshness of the data and the action that changes it belong together:
-	// the status line is the reason anyone reaches for Refresh.
 	view.status = systray.AddMenuItem("", "")
 	view.status.Disable()
 	view.refresh = systray.AddMenuItem("", "")
+	systray.AddSeparator()
 
-	view.details = systray.AddMenuItem("", "")
-	view.details.Hide()
-	view.detailRows = make([]*systray.MenuItem, maxDetailRows)
-	for i := range view.detailRows {
-		item := view.details.AddSubMenuItem("", "")
-		item.Disable()
-		item.Hide()
-		view.detailRows[i] = item
+	view.providersMenu = systray.AddMenuItem("", "")
+	view.providerRows = make([]providerEntry, len(wiring.Providers))
+	for i := range view.providerRows {
+		view.providerRows[i] = newProviderEntry(view.providersMenu)
 	}
 
 	view.settings = systray.AddMenuItem("", "")
@@ -190,13 +207,31 @@ func newMenuView(wiring Wiring) *menuView {
 			lang.NativeName(), "", lang == view.presenter.catalog.Lang())
 	}
 
-	systray.AddSeparator()
 	view.quit = systray.AddMenuItem("", "")
 
 	// Every fixed caption is written in one place, by the same call that rewrites
 	// them all when the language changes.
 	view.retitle()
 	return view
+}
+
+// newProviderEntry allocates one provider's list row and the account submenu
+// under it. The separator below the context row is added here and never removed,
+// which is safe because a provider entry always has that row above it.
+func newProviderEntry(parent *systray.MenuItem) providerEntry {
+	entry := providerEntry{row: parent.AddSubMenuItem("", "")}
+	entry.context = entry.row.AddSubMenuItem("", "")
+	entry.context.Disable()
+	entry.row.AddSeparator()
+
+	entry.accountRows = make([]*systray.MenuItem, maxAccountRows)
+	for i := range entry.accountRows {
+		item := entry.row.AddSubMenuItem("", "")
+		item.Disable()
+		item.Hide()
+		entry.accountRows[i] = item
+	}
+	return entry
 }
 
 // addReadout creates a row that displays a value rather than accepting a click.
@@ -216,9 +251,44 @@ func (v *menuView) currentInterval() time.Duration {
 	return time.Duration(v.presenter.Config().PollInterval)
 }
 
+// subscriptions reads the current state of every configured provider, in
+// configuration order. Both CLI documents are read per provider and per update,
+// and a failure in either is expected on a machine where that vendor's CLI has
+// never signed in: those rows stay hidden and the quota figures are unaffected.
+// They are read independently so one failing does not hide the other.
+func (v *menuView) subscriptions() Subscriptions {
+	subs := make(Subscriptions, 0, len(v.providers))
+	for _, provider := range v.providers {
+		account, _ := provider.CLI.Account()
+		prefs, _ := provider.CLI.Preferences()
+		subs = append(subs, Subscription{
+			Vendor:      provider.Controller.Vendor(),
+			State:       provider.Controller.State(),
+			Account:     account,
+			Preferences: prefs,
+		})
+	}
+	return subs
+}
+
+// refreshAll asks every provider for an immediate poll, and reports whether any
+// of them accepted. One provider still inside its manual-refresh floor does not
+// make the click a no-op for the others, so the rejection message is shown only
+// when nothing at all was requested.
+func (v *menuView) refreshAll() bool {
+	accepted := false
+	for _, provider := range v.providers {
+		if provider.Controller.Refresh() {
+			accepted = true
+		}
+	}
+	return accepted
+}
+
 // changeSettings persists a settings change and applies it to the running app. A
-// rejected or unsaveable change leaves the poller and the file untouched and says
-// so in the status line, so the menu never displays a state that is not on disk.
+// rejected or unsaveable change leaves every poller and the file untouched and
+// says so in the status line, so the menu never displays a state that is not on
+// disk.
 func (v *menuView) changeSettings(changed config.Config, err error) {
 	if err == nil {
 		err = v.save(changed)
@@ -230,10 +300,12 @@ func (v *menuView) changeSettings(changed config.Config, err error) {
 	}
 
 	v.presenter = NewPresenter(changed)
-	v.controller.SetInterval(time.Duration(changed.PollInterval))
+	for _, provider := range v.providers {
+		provider.Controller.SetInterval(time.Duration(changed.PollInterval))
+	}
 	v.retitle()
 	v.syncSettingChecks()
-	v.apply(v.controller.State(), time.Now())
+	v.apply(time.Now())
 }
 
 // retitle rewrites every caption that is not rewritten by the render path: the
@@ -247,7 +319,7 @@ func (v *menuView) retitle() {
 		widget *systray.MenuItem
 		title  i18n.Key
 	}{
-		{v.details, i18n.MenuDetails},
+		{v.providersMenu, i18n.MenuProviders},
 		{v.settings, i18n.MenuSettings},
 		{v.refresh, i18n.MenuRefresh},
 		{v.quit, i18n.MenuQuit},
@@ -283,24 +355,54 @@ func setChecked(item *systray.MenuItem, checked bool) {
 	item.Uncheck()
 }
 
-func (v *menuView) apply(state PollState, now time.Time) {
-	// A failure in either document is expected on a machine where the CLI has
-	// never signed in or was never configured; those rows stay hidden and the
-	// quota figures are unaffected. They are read independently so one failing
-	// does not hide the other.
-	account, _ := v.cli.Account()
-	prefs, _ := v.cli.Preferences()
-	v.applyDetails(state, account, prefs)
+func (v *menuView) apply(now time.Time) {
+	subs := v.subscriptions()
+	active := subs.Active()
 
-	percent, level, stale := v.presenter.IconState(state)
+	setReadout(v.header, v.presenter.HeaderRow())
+	setReadout(v.provider, v.presenter.ProviderRow(active))
+	setReadout(v.prefs, v.presenter.PreferencesRow(active))
+	applyRows(v.meters, v.presenter.MeterRows(active, now))
+	v.status.SetTitle(v.presenter.StatusText(active, now))
+	v.applyProviders(subs)
+
+	percent, level, stale := v.presenter.IconState(active)
 	if icon := trayicon.Render(percent, level, stale); !bytes.Equal(icon, v.lastIcon) {
 		systray.SetIcon(icon)
 		v.lastIcon = icon
 	}
-	systray.SetTooltip(v.presenter.Tooltip(state, now))
+	systray.SetTooltip(v.presenter.Tooltip(active, now))
+}
 
-	applyRows(v.rows, v.presenter.Rows(state, now))
-	v.status.SetTitle(v.presenter.StatusText(state, now))
+// applyProviders fills the provider list. The slice was sized from the same
+// configuration this reads, so the two cannot disagree; an entry whose account
+// documents could not be read still lists the provider, because the entry names
+// what is being monitored and only the fields under it come from those documents.
+//
+// An entry that cannot name itself at all is hidden rather than listed blank,
+// and a list left with nothing in it hides the parent that opens it.
+func (v *menuView) applyProviders(subs Subscriptions) {
+	listed := 0
+	for i, entry := range v.providerRows {
+		sub := subs[i]
+		name := MenuRowTitle(v.presenter.ProviderListRow(sub))
+		if name == "" {
+			entry.row.Hide()
+			continue
+		}
+		entry.row.SetTitle(name)
+		// The submenu heads itself with the vendor *and* what it sells, which is
+		// the qualifier the list entry deliberately leaves out.
+		entry.context.SetTitle(MenuRowTitle(v.presenter.ProviderRow(sub)))
+		applyRows(entry.accountRows, v.presenter.AccountRows(sub))
+		entry.row.Show()
+		listed++
+	}
+	if listed == 0 {
+		v.providersMenu.Hide()
+		return
+	}
+	v.providersMenu.Show()
 }
 
 // applyRows fills a fixed block of pre-allocated items from a variable number of
@@ -326,17 +428,4 @@ func setReadout(item *systray.MenuItem, row Row) {
 	}
 	item.SetTitle(title)
 	item.Show()
-}
-
-func (v *menuView) applyDetails(state PollState, account *identity.Account, prefs *identity.Preferences) {
-	setReadout(v.header, v.presenter.HeaderRow(state))
-	setReadout(v.account, v.presenter.AccountRow(account))
-
-	rows := v.presenter.DetailRows(account, prefs)
-	applyRows(v.detailRows, rows)
-	if len(rows) == 0 {
-		v.details.Hide()
-		return
-	}
-	v.details.Show()
 }

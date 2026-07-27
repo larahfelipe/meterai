@@ -7,17 +7,18 @@ long until each window resets, and warns as a limit approaches — reading the
 credentials the official CLI already wrote, so there is nothing to log into.
 
 ```
- Anthropic                                          Claude Max
-     Felipe
+ meterAI                                                v0.1.0
  ─────────────────────────────────────────────────────────────
+ Anthropic                                          Claude Max
+ Opus • High Effort
  Session (5h) · resets in 2h13              47%  ▄▄▄▄▄▁▁▁▁▁
  Weekly (7d) · resets in 4d06h             100%  ▄▄▄▄▄▄▄▄▄▄
  ─────────────────────────────────────────────────────────────
  Updated 1m ago · next in 3m
  Refresh now
- Details                                                    ▸
- Settings                                                   ▸
  ─────────────────────────────────────────────────────────────
+ Providers                                                  ▸
+ Settings                                                   ▸
  Quit
 ```
 
@@ -76,10 +77,19 @@ so a published hash means something.
 
 Run `meterAI.exe`. The icon appears in the notification area.
 
-- **Hover** for the quota windows and the status of polling.
-- **Click** for the menu above: each meter on its own row, what the app is doing
-  right now, _Refresh now_, _Details_ (account, organization, configured model),
-  and _Settings_.
+- **Hover** for each quota window and its percentage. The tooltip is capped at 63
+  characters by the shell, so it carries the figures and drops the countdowns.
+- **Click** for the menu above. It reads top to bottom as what is being
+  monitored, how fresh it is, and where to go next:
+  - the app and its release, then the provider being monitored, what its CLI is
+    configured to use, and one row per quota window;
+  - _Updated…_ and _Refresh now_, together because the first is the reason for
+    the second;
+  - _Providers_, _Settings_ and _Quit_.
+- **Providers** lists every monitored subscription by name, one entry each, and
+  opens on the plan and the account behind it — name, e-mail, organization.
+  Account details live there rather than on the first level, which is what keeps
+  an address off the screen until it is asked for.
 - **Settings** show the value in force beside their name and change the update
   cadence and the language without a restart. Each change is written to the
   config file before it is applied, so the menu never shows a setting that is not
@@ -197,10 +207,12 @@ pure and lives in untagged files, testable on any host.
 ## Adding a provider
 
 Implement `quota.Provider` in `internal/provider/<name>/` — `Vendor() string` and
-`Fetch(ctx) (*quota.Snapshot, error)`. The core does not change to accommodate a
-new vendor. [CLAUDE.md §5](CLAUDE.md) states the full contract; the two things
-easiest to get wrong are classifying failures correctly, since that drives both
-retry cadence and the message shown, and treating every remote field as optional.
+`Fetch(ctx) (*quota.Snapshot, error)`, then append its poller to the list the
+tray is wired with. Neither the core nor the menu changes shape to accommodate a
+new vendor: the provider list allocates one entry per configured provider.
+[CLAUDE.md §5](CLAUDE.md) states the full contract; the two things easiest to get
+wrong are classifying failures correctly, since that drives both retry cadence
+and the message shown, and treating every remote field as optional.
 
 ## Limitations
 

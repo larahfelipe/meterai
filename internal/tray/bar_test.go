@@ -96,7 +96,7 @@ func TestRowsGaugeEveryBoundedMeter(t *testing.T) {
 		},
 	}}}
 
-	rows := presenterFor(t, i18n.LangEnUS).Rows(state, now)
+	rows := presenterFor(t, i18n.LangEnUS).MeterRows(metering(state), now)
 	if rows[0].Bar != "▄▄▁▁▁▁▁▁▁▁" {
 		t.Errorf("utilization gauge = %q", rows[0].Bar)
 	}
@@ -107,17 +107,6 @@ func TestRowsGaugeEveryBoundedMeter(t *testing.T) {
 	// because nothing was spent: an empty gauge there would invent an allowance.
 	if rows[2].Bar != "" {
 		t.Errorf("uncapped balance gauge = %q, want none", rows[2].Bar)
-	}
-}
-
-// Ten cells per meter would cost more of the 127-rune budget than the figures,
-// pushing the status line out of the tooltip.
-func TestTooltipCarriesNoGauges(t *testing.T) {
-	for _, lang := range i18n.Available() {
-		tooltip := presenterFor(t, lang).Tooltip(liveState(), now)
-		if strings.ContainsRune(tooltip, barFilledCell) || strings.ContainsRune(tooltip, barEmptyCell) {
-			t.Errorf("%s: tooltip carries a gauge: %q", lang, tooltip)
-		}
 	}
 }
 
@@ -157,7 +146,7 @@ func TestMenuRowTitleOmitsFieldsTheMeterLacks(t *testing.T) {
 // everything after it is drawn flush right, which puts every value in the same
 // column.
 func TestMenuRowTitlePutsEveryValueInOneColumn(t *testing.T) {
-	rows := presenterFor(t, i18n.LangPtBR).Rows(liveState(), now)
+	rows := presenterFor(t, i18n.LangPtBR).MeterRows(live(), now)
 	if len(rows) < 2 {
 		t.Fatalf("rows = %d, want at least two meters", len(rows))
 	}
@@ -186,7 +175,7 @@ func TestMenuRowTitleAlignsFiguresAgainstTheGauge(t *testing.T) {
 		state := poll.State{Snapshot: &quota.Snapshot{Meters: []quota.Meter{
 			&quota.Utilization{MeterID: "anthropic:session", Name: "session", Percent: percent},
 		}}}
-		row := presenterFor(t, i18n.LangEnUS).Rows(state, now)[0]
+		row := presenterFor(t, i18n.LangEnUS).MeterRows(metering(state), now)[0]
 		title := MenuRowTitle(row)
 		_, right, _ := strings.Cut(title, menuRightAlign)
 		if got, want := utf8.RuneCountInString(right)-utf8.RuneCountInString(row.Detail), meterBarCells+len(menuValueGap); got != want {
@@ -200,7 +189,7 @@ func TestMenuRowTitleHasNoColumnBreakWithoutAValue(t *testing.T) {
 	// widen every other row in the menu.
 	for _, row := range []Row{
 		{Label: "Refresh now"},
-		{Label: menuContinuationIndent + "Sample"},
+		{Label: "Opus • High Effort"},
 		{},
 	} {
 		if title := MenuRowTitle(row); strings.Contains(title, menuRightAlign) {

@@ -118,6 +118,11 @@ func (p *Poller) SetInterval(interval time.Duration) {
 	p.interval = clampInterval(interval)
 }
 
+// Vendor is the key of the provider this poller drives. It is readable before
+// the first poll and never changes, so a UI can name and list a provider that
+// has not answered yet instead of leaving a blank entry until it does.
+func (p *Poller) Vendor() string { return p.provider.Vendor() }
+
 // Interval reports the cadence in force.
 func (p *Poller) Interval() time.Duration {
 	p.mu.RLock()

@@ -88,7 +88,7 @@ type Key uint8
 
 const (
 	MenuRefresh Key = iota + 1
-	MenuDetails
+	MenuProviders
 	MenuSettings
 	MenuInterval
 	MenuLanguage
@@ -98,8 +98,7 @@ const (
 	AccountName
 	AccountEmail
 	AccountOrganization
-	PreferredModel
-	PreferredEffort
+	EffortLevel
 	MenuQuit
 	RefreshRejected
 	MeterResetSuffix
@@ -111,6 +110,7 @@ const (
 	CountdownDays
 	StatusFirstPoll
 	StatusUpdated
+	StatusUpdatedBrief
 	StatusStale
 	ErrorUnauthorized
 	ErrorRateLimited
@@ -126,7 +126,7 @@ const (
 
 var keyNames = [keyCount]string{
 	MenuRefresh:          "MenuRefresh",
-	MenuDetails:          "MenuDetails",
+	MenuProviders:        "MenuProviders",
 	MenuSettings:         "MenuSettings",
 	MenuInterval:         "MenuInterval",
 	MenuLanguage:         "MenuLanguage",
@@ -136,8 +136,7 @@ var keyNames = [keyCount]string{
 	AccountName:          "AccountName",
 	AccountEmail:         "AccountEmail",
 	AccountOrganization:  "AccountOrganization",
-	PreferredModel:       "PreferredModel",
-	PreferredEffort:      "PreferredEffort",
+	EffortLevel:          "EffortLevel",
 	MenuQuit:             "MenuQuit",
 	RefreshRejected:      "RefreshRejected",
 	MeterResetSuffix:     "MeterResetSuffix",
@@ -149,6 +148,7 @@ var keyNames = [keyCount]string{
 	CountdownDays:        "CountdownDays",
 	StatusFirstPoll:      "StatusFirstPoll",
 	StatusUpdated:        "StatusUpdated",
+	StatusUpdatedBrief:   "StatusUpdatedBrief",
 	StatusStale:          "StatusStale",
 	ErrorUnauthorized:    "ErrorUnauthorized",
 	ErrorRateLimited:     "ErrorRateLimited",

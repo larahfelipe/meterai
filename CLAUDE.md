@@ -49,6 +49,8 @@ toolchain. Never add a dependency that needs CGO.
 credential.Cache ─┬→ provider/anthropic → poll.Poller ─┬→ tray → i18n
                   └→ identity.Cache ───────────────────┘
                           ↘ internal/quota ↙
+
+one tray.ProviderWiring per vendor: {Controller, CLIReader}
 ```
 
 Dependencies flow one way and converge on `internal/quota`, which imports no project package —
@@ -162,25 +164,68 @@ vendor knowledge and is identical in every language.
 
 ### 3.7 Meter order is load-bearing
 
-It sets menu row order and decides which meters survive tooltip truncation at 127 runes and the
-fixed `maxMeterRows = 6` menu slots. Never sort it, never build it by iterating a map. It also
-decides which row states a shared reset countdown: `Presenter.Rows` suppresses one that repeats the
-row immediately above, so reordering moves the countdown to a different row.
+It sets menu row order and decides which meters survive the tooltip budget (§3.12) and the fixed
+`maxMeterRows = 6` menu slots. Never sort it, never build it by iterating a map. It also decides
+which row states a shared reset countdown: `Presenter.MeterRows` suppresses one that repeats the row
+immediately above, so reordering moves the countdown to a different row.
 
-### 3.8 The menu is allocated once
+### 3.8 The menu is allocated once, in four groups
 
-systray can add an item but never remove one, so every widget — meter rows, the two heading rows,
-the `maxDetailRows` submenu rows, the settings items — is created in `onReady` and afterwards only
-shown or hidden. A row with nothing to say is hidden, never left blank, and a submenu with no
-visible rows hides its parent too. **A separator cannot be hidden at all**, which is why
-`HeaderRow` falls back to `tray.AppName` instead of ever returning empty: the first group would
-otherwise open with a divider above nothing. `maxDetailRows = 4` is the ceiling `DetailRows` can
-produce (two account fields, since the third always heads the menu, plus two preference fields) and
-a test holds it there, because the platform layer cannot allocate a fifth.
+systray can add an item but never remove one, so every widget — the heading, the provider and
+preferences rows, the meter rows, the provider list and its per-provider account rows, the settings
+items — is created in `onReady` and afterwards only shown or hidden. A row with nothing to say is
+hidden, never left blank, and a submenu with no visible rows hides its parent too.
+
+Four separators split the first level into what the app is, what it is currently reading, how fresh
+that reading is, and where to go next:
+
+```
+meterAI                              v0.1.0     ← the app, fixed, never hidden
+───────────────────────────────────────────────
+Anthropic                        Claude Pro     ← the active provider
+Opus • High Effort                              ← what its CLI is configured to use
+Session (5h) · resets in 2h54   23%  ▄▄▁▁▁▁▁▁▁▁
+Weekly (7d) · resets in 1d01h   74%  ▄▄▄▄▄▄▄▁▁▁
+───────────────────────────────────────────────
+Updated 1m ago · next in 3m
+Refresh now
+───────────────────────────────────────────────
+Providers                                     ▸ ← one entry per configured provider
+Settings                                      ▸
+Quit
+```
+
+Every row of the second group starts at the same margin — nothing is indented under the provider,
+because stepping one row in and back out breaks the column of names the group is read down.
+
+**A separator cannot be hidden at all**, and that constraint decides two things. `HeaderRow` names
+the app rather than the provider, so it is never empty and the first group can never open with a
+divider above nothing. And **only one provider can hold the first level**: stacking a second
+provider's block there would need a separator between the two, which a provider with nothing to
+report could not hide. `Subscriptions.Active` is that position — the first configured provider —
+and every other provider is reached through the list, which grows without the first level changing
+shape.
+
+A provider is named twice and qualified once: `ProviderListRow` puts the vendor alone in the list, so
+the list reads as a column of names, and `ProviderRow` heads that provider's own submenu with the
+vendor *and* what it sells. Stating the plan on both the row that opens a submenu and the row behind
+it is the same fact twice, one click apart.
+
+`maxAccountRows = 3` is the ceiling `AccountRows` can produce, one per field of `identity.Account`,
+and a test holds it there because the platform layer cannot allocate a fourth.
+
+The group under the first separator assumes `Wiring.Providers` is non-empty and that every provider
+answers `Vendor()` with something — both hold by construction, and the cost of neither holding is two
+adjacent separators, not a crash.
 
 **Windows popup menus have no per-item tooltip.** systray's Windows backend drops the argument and
 hover help would have to be owner-drawn, so a row that cannot say what it means in its own caption
 cannot say it at all. The tooltip catalogue keys do not exist for that reason.
+
+The split between the two levels is by how often a value is read, not by which document supplied it:
+quota figures and the configured model are operational state and stay on the first level; the fields
+that identify an account are consulted rarely and are read by everyone watching a shared screen, so
+they live behind the provider's own entry. A test asserts no account field reaches the first level.
 
 ### 3.9 Menu row grammar, and where external text stops being data
 
@@ -216,6 +261,20 @@ the same rule so the icon and the menu can never disagree.
   `anthropic.Provider.now`, and explicit `now` parameters throughout `internal/tray`. Keep new code
   in this shape or its tests become clock-dependent.
 
+### 3.12 The tooltip has 63 characters, and no line may lose its figure
+
+`NOTIFYICONDATA.szTip` is declared as 128 WCHARs, but the shell only honours that for an icon that
+announced itself through `NIM_SETVERSION`. systray never issues it, so the shell reads the legacy
+64-WCHAR field: **63 characters plus the terminator**, and everything past that is discarded
+silently, mid-line. That is why `maxTooltipRunes = 63` and why the tooltip is a different
+composition from the menu rather than a copy of it — the reset countdowns and the gauges are dropped
+so that two windows and a status line fit.
+
+`joinWithinBudget` includes a meter line whole or not at all. A meter line cut mid-way loses the
+figure at the end of it and reads exactly like a meter that reported none, which is the one
+misreading this text must not produce. The trailing status line is prose and is elided instead,
+because a sentence still reads when cut short.
+
 ---
 
 ## 4. The CLI's own documents
@@ -234,16 +293,25 @@ document failing hides its own rows only, and polling continues either way.
 
 **Neither the model nor the effort exists remotely**, and the local file gives a *default*, not what
 a session is running: the CLI resolves that from a runtime `/model`, an environment variable and
-project-level settings, none of which this app can observe. The labels say "default" for that
-reason — `lastModelUsage` in the state document is worse still, being per project directory and
-written at session end. `settings.json` also holds an `env` block that can carry other services'
-credentials, so only the two fields are decoded and no error path quotes the document.
+project-level settings, none of which this app can observe. `lastModelUsage` in the state document is
+worse still, being per project directory and written at session end. `settings.json` also holds an
+`env` block that can carry other services' credentials, so only the two fields are decoded and no
+error path quotes the document.
+
+Both values reach the menu title-cased, and only their first rune is touched: the rest is what the
+user typed and may carry capitals that matter. The row is a caption rather than a quotation of the
+file, and `opus` beside a column of capitalized window names reads as a defect. The effort does not
+travel alone either — `High` names no setting by itself, so it is interpolated into the `EffortLevel`
+catalogue entry, and the two are joined into one row rather than given a label column each.
 
 ---
 
 ## 5. Adding a provider
 
-Implement `quota.Provider` under `internal/provider/<name>/`. The core does not change.
+Implement `quota.Provider` under `internal/provider/<name>/`. The core does not change, and neither
+does the menu: `main.go` appends a `tray.ProviderWiring` — that vendor's poller and its `CLIReader` —
+to `Wiring.Providers`, and the provider list allocates one entry per element (§3.8). Nothing in
+`internal/tray` counts providers or assumes there is one.
 
 ```go
 type Provider interface {

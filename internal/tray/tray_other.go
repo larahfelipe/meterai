@@ -8,8 +8,6 @@ import (
 	"io"
 	"os"
 	"time"
-
-	"github.com/larahfelipe/meterai/internal/identity"
 )
 
 // Run prints each state change to stderr instead of drawing a tray icon.
@@ -28,17 +26,26 @@ func Run(ctx context.Context, wiring Wiring) error {
 func run(ctx context.Context, w io.Writer, wiring Wiring) error {
 	presenter := NewPresenter(wiring.Config)
 	renderNow := func() {
-		// Unlike the tray, the development host reports why a document could not
-		// be read: it is the only place those failures are diagnosable.
-		account, err := wiring.CLI.Account()
-		if err != nil {
-			fmt.Fprintf(w, "meterAI: account details unavailable: %v\n", err)
+		subs := make(Subscriptions, 0, len(wiring.Providers))
+		for _, provider := range wiring.Providers {
+			// Unlike the tray, the development host reports why a document could
+			// not be read: it is the only place those failures are diagnosable.
+			account, err := provider.CLI.Account()
+			if err != nil {
+				fmt.Fprintf(w, "meterAI: account details unavailable: %v\n", err)
+			}
+			prefs, err := provider.CLI.Preferences()
+			if err != nil {
+				fmt.Fprintf(w, "meterAI: CLI preferences unavailable: %v\n", err)
+			}
+			subs = append(subs, Subscription{
+				Vendor:      provider.Controller.Vendor(),
+				State:       provider.Controller.State(),
+				Account:     account,
+				Preferences: prefs,
+			})
 		}
-		prefs, err := wiring.CLI.Preferences()
-		if err != nil {
-			fmt.Fprintf(w, "meterAI: CLI preferences unavailable: %v\n", err)
-		}
-		render(w, presenter, wiring.Controller.State(), account, prefs, time.Now())
+		render(w, presenter, subs, time.Now())
 	}
 	renderNow()
 	for {
@@ -56,21 +63,48 @@ func run(ctx context.Context, w io.Writer, wiring Wiring) error {
 //
 // The column widths are this file's own: a terminal is monospaced, so it lines
 // rows up with padding where the menu has to use a tab. What it reproduces is the
-// order and the grouping, which is what the pipeline is being exercised for.
-func render(w io.Writer, presenter *Presenter, state PollState, account *identity.Account,
-	prefs *identity.Preferences, now time.Time) {
-	fmt.Fprintf(w, "\n[%s] %s\n", now.Format(time.RFC3339), AppName)
-	writeRow(w, presenter.HeaderRow(state))
-	writeRow(w, presenter.AccountRow(account))
-	for _, row := range presenter.Rows(state, now) {
+// order and the grouping of the menu, which is what the pipeline is being
+// exercised for — including the provider list, so a second vendor shows up here
+// before it can be seen on Windows.
+func render(w io.Writer, presenter *Presenter, subs Subscriptions, now time.Time) {
+	// The instant heads the block because this output is a stream: unlike the
+	// menu, which is read once and replaced, every render here stays on screen
+	// above the next one.
+	fmt.Fprintf(w, "\n[%s]\n", now.Format(time.RFC3339))
+	writeRow(w, presenter.HeaderRow())
+
+	active := subs.Active()
+	writeRow(w, presenter.ProviderRow(active))
+	writeRow(w, presenter.PreferencesRow(active))
+	for _, row := range presenter.MeterRows(active, now) {
 		writeRow(w, row)
 	}
-	fmt.Fprintf(w, "  %s\n", presenter.StatusText(state, now))
-	for _, row := range presenter.DetailRows(account, prefs) {
-		writeRow(w, row)
+	fmt.Fprintf(w, "  %s\n", presenter.StatusText(active, now))
+
+	// The provider list, and behind each entry the submenu it opens: the vendor
+	// with what it sells, then that account's fields. A terminal has no submenus,
+	// so nesting is the one thing this has to express with indentation.
+	for _, sub := range subs {
+		writeRow(w, presenter.ProviderListRow(sub))
+		writeRow(w, indent(presenter.ProviderRow(sub)))
+		for _, row := range presenter.AccountRows(sub) {
+			writeRow(w, indent(row))
+		}
 	}
 	writeRow(w, presenter.IntervalRow())
 	writeRow(w, presenter.LanguageRow())
+}
+
+// indent marks a row as belonging to the one above it. The menu expresses that
+// with a submenu, which a stream of lines cannot; the label column absorbs the
+// prefix, so the values stay in the same column as every other row.
+func indent(row Row) Row {
+	const nestedIndent = "    "
+	if row == (Row{}) {
+		return row
+	}
+	row.Label = nestedIndent + row.Label
+	return row
 }
 
 // writeRow prints one row, skipping an empty one exactly as the menu hides it.

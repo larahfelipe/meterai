@@ -1,165 +1,17 @@
 # meterAI
 
-A Windows notification-area monitor for AI subscription usage quotas. It shows
-how much of each allowance has been consumed, how long until each window
-resets, and warns as a limit approaches — without asking you to log in again.
+A Windows notification-area monitor for AI subscription usage quotas.
 
----
-
-## Core principle: read, never write
-
-There is no public API for querying a consumer subscription's quota — the
-Claude Pro/Max five-hour window, for instance. Those figures exist only behind
-internal endpoints that the official CLIs use, authenticated with OAuth tokens
-those CLIs have already written to disk.
-
-meterAI reads those tokens and **never modifies them**:
-
-- no OAuth flow of its own;
-- no token refresh;
-- no rewriting of the credential file.
-
-The reason is concrete. Anthropic's `refresh_token` rotates when used. If this
-app refreshed the token on its own and did not write the result back, the copy
-the CLI still holds would become invalid and the user would be logged out of
-their CLI. Writing it back, in turn, would race the CLI's own file lock. The
-choice is to remain strictly a reader: when the token expires, the app enters a
-degraded state and says that running the CLI once will renew it.
-
-Practical consequence: **the app depends on the official CLI having been used at
-least once**, and stops updating if the token expires without the CLI being used
-again.
-
----
-
-## Architecture
+It sits in the tray and shows how much of each allowance has been consumed, how
+long until each window resets, and warns as a limit approaches — reading the
+credentials the official CLI already wrote, so there is nothing to log into.
 
 ```
-              ┌──────────────────────┐
-              │  .credentials.json   │  (written by the official CLI;
-              │  native Windows or   │   this app only reads it)
-              │  \\wsl.localhost\... │
-              └──────────┬───────────┘
-                         │ read on demand
-              ┌──────────▼───────────┐
-              │  credential.Cache    │  re-reads only near expiry
-              └──────────┬───────────┘
-                         │ Token(ctx)
-              ┌──────────▼───────────┐
-              │  provider/anthropic  │  HTTPS → normalization
-              └──────────┬───────────┘
-                         │ quota.Snapshot
-              ┌──────────▼───────────┐
-              │  poll.Poller         │  cadence derived from failure kind
-              └──────────┬───────────┘
-                         │ signal + State()
-              ┌──────────▼───────────┐
-              │  tray                │  icon, tooltip, menu
-              └──────────────────────┘
-```
-
-The dependency graph is acyclic and converges on `internal/quota`, which imports
-no other package in the project.
-
-### Vendor-neutral data model
-
-Vendors expose quota in structurally different shapes: rolling percentage
-windows, daily counters, a money balance. `quota.Meter` is a sealed union with
-exactly two variants, which makes handling exhaustive by construction:
-
-| Variant             | Represents                 | Fields                                  |
-| ------------------- | -------------------------- | --------------------------------------- |
-| `quota.Utilization` | percentage of an allowance | `Percent`, `Reset`, `Level`, `IsActive` |
-| `quota.Balance`     | monetary balance           | `Used`, `Limit`, `Percent`, `Level`     |
-
-Rules that hold for every provider:
-
-- `MeterID` has the form `<vendor>:<kind>` (e.g. `anthropic:session`) and is a
-  stable key — it does not change across releases, even if the vendor renames
-  its field.
-- Money never passes through `float64`. `quota.Money` stores minor units
-  (`AmountMinor`, `Currency`, `Exponent`); the exponent controls presentation
-  only.
-- `Percent` is not clamped at 100: vendors that permit overage report values
-  above it, and the model preserves the real figure.
-
-### Error taxonomy
-
-Every fetch failure is a `*quota.FetchError` carrying one of the four kinds
-below. The kind determines what the poller does and what the UI tells the user:
-
-| Kind           | Origin                        | Reaction                   |
-| -------------- | ----------------------------- | -------------------------- |
-| `Unauthorized` | 401/403, expired token        | waits for user action      |
-| `RateLimited`  | 429                           | honours `Retry-After`      |
-| `Transient`    | network failure, 5xx, timeout | exponential backoff        |
-| `Protocol`     | uninterpretable response      | waits for a fix in the app |
-
-The distinction that matters: `Transient` and `RateLimited` resolve by waiting;
-`Unauthorized` and `Protocol` do not, and retrying them only reproduces the same
-error in a loop.
-
----
-
-## Requirements
-
-- Windows 10 or later (runtime target).
-- Go 1.25 or later (to build only).
-- An authenticated official CLI — `claude` for the Anthropic provider. It may be
-  installed on native Windows or inside a WSL2 distribution.
-
-External dependencies of the Windows binary: `fyne.io/systray` and
-`golang.org/x/sys`. Neither requires CGO.
-
----
-
-## Building
-
-```sh
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
-  go build -trimpath -ldflags="-s -w -H=windowsgui" -o dist/meterAI.exe ./cmd/meterai
-```
-
-`CGO_ENABLED=0` is a project requirement, not a convenience: it allows cross
-compilation from Linux or WSL with no C toolchain. `-H=windowsgui` suppresses
-the console window that would otherwise sit behind the tray icon.
-
-The build is reproducible: the same commit and Go toolchain produce a
-byte-identical executable, so a published hash means something. `-trimpath`
-keeps local paths out, and the version resource linked in from
-`cmd/meterai/meterai_windows_amd64.syso` carries a zero timestamp. That object is
-committed, so no extra step is needed; regenerate it after changing
-`internal/buildinfo` with
-
-```sh
-go generate ./cmd/meterai
-```
-
-and a test in `internal/winres` fails if the committed object and the source
-disagree.
-
-On non-Windows systems the same `main` compiles and runs headless, printing each
-update to stderr. This exists so the full pipeline — credential discovery,
-polling, backoff, formatting — can be exercised on the development host.
-
----
-
-## Usage
-
-Run `dist\meterAI.exe`. The icon appears in the notification area.
-
-- **Hovering** shows each quota window, its percentage, and the time to reset.
-  The tooltip carries no gauges: the shell caps it at 127 characters, and ten
-  cells per meter would push the status line out of it.
-- **Clicking** opens the menu:
-
-```
- Anthropic                                          Claude Pro
-     Felipe Lara
+ Anthropic                                          Claude Max
+     Felipe
  ─────────────────────────────────────────────────────────────
  Session (5h) · resets in 2h13              47%  ▄▄▄▄▄▁▁▁▁▁
  Weekly (7d) · resets in 4d06h             100%  ▄▄▄▄▄▄▄▄▄▄
- Weekly Opus (7d)                            4%  ▄▁▁▁▁▁▁▁▁▁
  ─────────────────────────────────────────────────────────────
  Updated 1m ago · next in 3m
  Refresh now
@@ -169,88 +21,85 @@ Run `dist\meterAI.exe`. The icon appears in the notification area.
  Quit
 ```
 
-- **Every row obeys one grammar**: what it is on the left, what it currently reads
-  on the right. The provider takes the position the eye lands on first and the
-  plan sits in the value column, so which service and which allowance are read in
-  one pass instead of being parsed out of one phrase. The account name is indented
-  under it; the e-mail, the organization and the model the CLI is configured to
-  prefer are a level down, in _Details_, because an address left permanently on
-  screen is read by everyone watching a shared screen.
-- That right-hand column is a **tab character**, which Windows menus draw flush
-  right. Padding with spaces cannot align anything, because the menu font is
-  proportional. Because the gauge is a fixed ten cells wide and the whole column
-  is flush right, the figures beside it land in a column of their own with no
-  padding at all. A row with nothing to put on the right — _Refresh now_, the
-  status line, an uncapped balance's missing gauge — carries no column break,
-  since an empty one would widen every other row in the menu.
-- **Windows that empty together state their countdown once.** Anthropic reports
-  every weekly window with the same reset instant; three consecutive rows
-  repeating it would bury the figures they exist to show, and the rows without it
-  read as belonging to the one above, which is what they are.
-- The gauge is drawn in **half-height and one-eighth-height block elements**
-  (`▄▁`) rather than a full block against a shaded one. Both sit on the baseline,
-  so it reads as a slim rule with a track under it, and both come from the same
-  Unicode block — a font either covers that block or falls back for all of it,
-  which is what keeps the two glyphs at one advance width.
-- The menu is **text only**: no per-item font weight, size or colour, no icons and
-  no animation. Those need an owner-drawn menu, which systray does not do. The
-  upside is that every row inherits the shell's own metrics, so it follows the
-  Light and Dark themes and every DPI scale for free, and the contrast is the
-  system's own.
-- **Settings** state the value in force beside their name, so reading one costs no
-  navigation and the submenu is only needed to change it. They change the update
-  cadence and the interface language without a
-  restart. Each change is written to the config file first and only then applied,
-  so the menu never shows a setting that is not on disk; if the write fails, the
-  status line says so and nothing changes. A new cadence takes effect after the
-  next poll — a wait already in progress is never shortened, since that would be
-  a way around the polling floor.
-- The **icon colour** follows severity: green, amber, red.
-- The icon turns **grey** when the displayed figures are no longer being
-  confirmed; the menu states how old they are.
+## Features
+
+- **Every quota window at a glance** — percentage, gauge and time to reset, with
+  the tray icon coloured by severity and greyed when the figures are no longer
+  being confirmed.
+- **No login.** It reads the token the official CLI stored and never modifies it.
+- **Finds the credential itself**, whether the CLI was installed on native
+  Windows or inside a WSL2 distribution.
+- **Settings in the menu** — polling cadence and interface language (`en-US`,
+  `pt-BR`), applied without a restart.
+- **Small footprint by design**: one process created, one network destination,
+  two files written, no registry key, no startup entry, no elevation.
+
+## How it works
+
+There is no public API for a consumer subscription's quota — the Claude Pro/Max
+five-hour window, for instance. Those figures live behind the internal endpoint
+the official CLI uses, authenticated with an OAuth token that CLI has already
+written to disk.
+
+meterAI reads that token and **never writes it back**: no OAuth flow of its own,
+no refresh, no rewrite. Anthropic's refresh token rotates when used, so
+refreshing it here would invalidate the copy the CLI holds and log you out of
+your own CLI. When the token expires, the app degrades and says that running
+`claude` once will renew it.
+
+Two practical consequences: the official CLI must have been used at least once,
+and it has to keep being used often enough for its token to stay valid.
+
+## Requirements
+
+- Windows 10 or later, to run.
+- An authenticated official CLI — `claude`, on native Windows or inside WSL2.
+- Go 1.25 or later, to build.
+
+The binary depends on `fyne.io/systray` and `golang.org/x/sys`. Neither needs
+CGO.
+
+## Install
+
+There is no release build yet; produce one with:
+
+```sh
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+  go build -trimpath -ldflags="-s -w -H=windowsgui" -o dist/meterAI.exe ./cmd/meterai
+```
+
+The build cross-compiles from Linux, WSL or macOS with no C toolchain, and is
+reproducible: the same commit and toolchain produce a byte-identical executable,
+so a published hash means something.
+
+## Usage
+
+Run `meterAI.exe`. The icon appears in the notification area.
+
+- **Hover** for the quota windows and the status of polling.
+- **Click** for the menu above: each meter on its own row, what the app is doing
+  right now, _Refresh now_, _Details_ (account, organization, configured model),
+  and _Settings_.
+- **Settings** show the value in force beside their name and change the update
+  cadence and the language without a restart. Each change is written to the
+  config file before it is applied, so the menu never shows a setting that is not
+  on disk.
+
+Only one instance runs per Windows logon session, enforced by a named kernel
+mutex; a second copy exits quietly with code `3`. Two users on the same machine
+each get their own instance.
 
 ### Starting with Windows
 
-meterAI does not install itself anywhere. It writes no registry key, no startup
-entry, no service and no scheduled task, and it never will without being asked:
-the only thing it creates is its own config file under `%APPDATA%\meterAI`.
-
-To have it start with the session, use the mechanism Windows already provides —
-press `Win+R`, run `shell:startup`, and drop a shortcut to `meterAI.exe` in the
-folder that opens. Removing the shortcut undoes it, with nothing left behind.
-
-Only one instance runs per Windows logon session, enforced by a named kernel
-mutex. A second copy exits quietly with exit code `3`. The scope is per session,
-not machine-wide: two users on the same machine each get their own instance,
-since each has their own subscription and credential.
-
----
-
-## Files written
-
-Two, and no others. Nothing is written to the registry, to a startup location,
-to a service, to a scheduled task, or anywhere near the credential file.
-
-**`%APPDATA%\meterAI\config.json`** — the settings below, created on first run
-with owner-only permissions and replaced atomically through a temporary file in
-the same directory.
-
-**`%TEMP%\systray_temp_icon_<md5>`** — the tray icon, written by the systray
-library rather than by this app: its API takes the icon as bytes and hands
-Windows a file path, so the bytes have to reach the disk somewhere. Each file is
-a 4,286-byte ICO of the gauge and nothing else, named after its own content hash,
-so a state already drawn is reused rather than rewritten. The gauge quantizes to
-whole rows, which bounds the set at 97 distinct icons — 405 KiB if every one of
-them is ever drawn, in the directory Windows itself clears. Writing them into
-`%APPDATA%` instead would only move the same files somewhere nothing cleans up.
-
----
+meterAI does not install itself anywhere and writes no startup entry. Use the
+mechanism Windows already provides: press `Win+R`, run `shell:startup`, and drop
+a shortcut to `meterAI.exe` in the folder that opens. Removing the shortcut
+undoes it, with nothing left behind.
 
 ## Configuration
 
-```
-%APPDATA%\meterAI\config.json
-```
+`%APPDATA%\meterAI\config.json`, created on first run with owner-only
+permissions and replaced atomically on every write:
 
 ```json
 {
@@ -262,279 +111,113 @@ them is ever drawn, in the directory Windows itself clears. Writing them into
 }
 ```
 
-| Field               | Meaning                                                                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `credentialPath`    | Explicit path to the credential file. Empty enables autodiscovery.                                                                          |
-| `pollInterval`      | Polling cadence. Values below the safe minimum are rejected with a message, not silently corrected.                                         |
-| `warnAtPercent`     | Local warning threshold.                                                                                                                    |
-| `criticalAtPercent` | Local critical threshold. Must be greater than or equal to `warnAtPercent`.                                                                 |
-| `language`          | Interface language: `en-US` (default) or `pt-BR`. Empty selects the default; an unsupported tag is rejected with the list of accepted ones. |
+| Field               | Meaning                                                                                                     |
+| ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `credentialPath`    | Explicit path to the CLI credential file. Empty enables autodiscovery.                                      |
+| `pollInterval`      | Polling cadence. Below the safe minimum of 5 minutes it is rejected with a message, not silently corrected. |
+| `warnAtPercent`     | Local warning threshold.                                                                                    |
+| `criticalAtPercent` | Local critical threshold, at or above `warnAtPercent`.                                                      |
+| `language`          | `en-US` (default) or `pt-BR`.                                                                               |
 
 `pollInterval` and `language` are also editable from the _Settings_ submenu,
-which writes this same file. The menu offers only cadences at or above the floor,
-so a choice made there can always be saved.
+which writes this same file.
 
 A populated `credentialPath` is **authoritative**: if that path fails, the app
-reports an error rather than looking elsewhere. Falling through to another
-candidate would mean silently monitoring a different account than the pinned one.
+reports an error instead of looking elsewhere, since falling through would mean
+silently monitoring a different account than the pinned one.
 
-Local thresholds are combined with the vendor's own reported severity, with the
-more severe of the two winning. The vendor is never overruled downward: if
-Anthropic says critical, the icon says critical. These thresholds exist because
-vendors classify as normal percentages well past the point a user wants to be
-warned.
+Local thresholds are combined with the vendor's own severity and the more severe
+of the two wins; the vendor is never overruled downward. A config file that
+exists but cannot be parsed is an error and is never overwritten, and missing
+fields are filled from the defaults, so documents written by earlier releases
+keep working.
 
-An existing but unreadable config file is an error and is never overwritten.
-Missing fields are filled from the defaults, so documents written by earlier
-releases remain valid. Writes are atomic (temporary file followed by a rename
-within the same directory).
+## What it touches
 
----
+The whole footprint, and it is a ceiling rather than a default:
 
-## Credential discovery
+- **One process created**: `wsl.exe -l -q`, to list WSL distributions — started
+  by its absolute path under `System32`, never through `PATH`, with a fixed
+  argument list. Nothing is ever executed inside a distribution; its home
+  directories are read over `\\wsl.localhost`.
+- **One network destination**: the vendor's own API.
+- **Two files written**: `%APPDATA%\meterAI\config.json`, and the tray icon that
+  systray hands to Windows as a path in `%TEMP%` (a 4 KiB ICO named after its own
+  content hash, at most 97 of them).
+- **Nothing else**: no registry key, no startup entry, no service, no scheduled
+  task, no dynamic code loading, and no elevation — it carries no manifest
+  requesting one, so Windows runs it as invoker by default.
 
-The credential file is not in a fixed place: it depends on how the CLI was
-installed and where the login happened. The search runs in this order:
+The only secret handled is the OAuth token, and the protections are structural:
+it is redacted by its own type in every rendered form, its single reveal site is
+the outbound `Authorization` header, the refresh token is never carried into
+memory at all, and no code path writes to the credential file. Every read from a
+file, a socket or a child process is size-bounded, and text coming from documents
+the app only reads is neutralized before it reaches a menu caption.
 
-1. `credentialPath`, if configured — and only it.
-2. `%USERPROFILE%\.claude\.credentials.json` (native Windows installation).
-3. For every WSL distribution returned by `wsl.exe -l -q`, excluding system
-   distributions: `\\wsl.localhost\<distro>\<home>\.claude\.credentials.json`.
+## Development
 
-`$HOME` inside the distribution is queried at runtime, never assumed: the WSL
-account name is chosen at setup and need not match the Windows one.
-Distributions belonging to other products (Docker Desktop, Rancher Desktop) are
-skipped — probing them would boot a VM for nothing.
+```sh
+go test -short -race ./...     # offline, deterministic — the default loop
+go test -race ./...            # also hits the live endpoint (1 request per run)
+go vet ./... && GOOS=windows go vet ./...
+gofmt -l .
+go run ./cmd/meterai           # headless: prints each poll to stderr
+```
 
-### Why UNC rather than `wsl.exe`
+On non-Windows hosts the same `main` compiles and runs headless, printing each
+update to stderr, so the whole pipeline — credential discovery, polling, backoff,
+formatting — can be exercised where the credentials actually live. Because the
+Windows-only files are excluded from a local build, `GOOS=windows go vet ./...`
+is part of the loop rather than an afterthought.
 
-Everything inside a distribution is reached over the `\\wsl.localhost` network
-path. Reading over UNC is an order of magnitude faster than spawning a
-subprocess, requires no UTF-16 output decoding, and does not depend on
-`wsl.exe`'s flag format, which has varied between versions.
-
-**`wsl.exe -l -q` is the only process this application ever creates**, and it
-exists solely because listing the distributions themselves is not something the
-UNC namespace exposes. The argument list is fixed, nothing user-supplied reaches
-it, and its output is parsed defensively: a name that is not a single path
-component is discarded rather than concatenated into a path.
-
-The home directory inside each distribution is found by listing `\home` over the
-same UNC transport and adding `\root`, rather than by running
-`sh -c 'echo $HOME'` inside the distribution. That earlier approach spent a full
-VM boot to learn one string, and executing a shell interpreter inside another
-operating system is a large amount of machinery for a directory name. Reading the
-filesystem this app already reads costs nothing extra and keeps the process
-surface at one. The trade is that a home directory somewhere other than `/home/*`
-or `/root` is now out of reach; `credentialPath` in the config file is the answer
-for that layout.
-
-### Stopped distribution
-
-Both routes wake a stopped distribution, so the difference is not the route but
-the access frequency. The access token lives for hours and the file reads in
-milliseconds, so `credential.Cache` re-reads only when the cached token
-approaches expiry — not on every poll. While the cached token remains valid, a
-temporary WSL outage does not interrupt monitoring.
-
----
-
-## Account details and configured model
-
-The name, e-mail and organization shown in the menu are read from the CLI's own
-state document, `.claude.json`, which sits **beside** the `.claude` directory
-rather than inside it. The CLI fetches its profile once and caches it there, so
-reading that cache costs no request, works offline, and spares this app a second
-undocumented endpoint to depend on.
-
-The **default model** and **default effort** come from a second document,
-`.claude/settings.json`, which sits beside the credential file. Neither figure
-exists remotely: the quota endpoint reports usage windows and spend, and nothing
-else — verified against the live response, which carries no field naming a model
-or an effort level.
-
-Both rows say **default** because that is all the file can support. The CLI
-resolves the effective value per session from a chain this app cannot observe — a
-runtime `/model` choice, an environment variable, a project's own settings file —
-so a session may well be running something else. The value is shown exactly as
-written, without changing its case: the row exists so it can be compared against
-the file it came from. Anything else on offer locally is worse: the state
-document's `lastModelUsage` is recorded per project directory and written when a
-session ends, which makes it "the last model of the last project", not the model
-in use.
-
-That document also holds permission rules, hook commands and an `env` block whose
-values can be credentials for other services. Only the two fields above are
-decoded, and no error path here quotes any part of it. It is re-read on each poll
-rather than cached, because the user can change it at any moment and a held value
-would go on contradicting the file.
-
-The path is derived from the credential file actually in use, never from the
-running user's home directory. That is what guarantees the account on screen and
-the quota being polled belong to the same installation — otherwise a credential
-found inside WSL, or pinned through `credentialPath`, would be reported under
-whichever account happened to be signed in on the Windows side.
-
-This document is read-only to meterAI, exactly like the credential file. It is
-also the CLI's private bookkeeping: it carries a schema version the CLI has
-already migrated repeatedly, so every field is optional, the read is size-bounded,
-and any failure — absent, unparseable, or simply not signed in — hides the
-account rows instead of affecting polling. Account values never appear in an
-error message or on a log line; a decoding failure reports its structural cause
-only, because the document also holds the user's project paths.
-
----
-
-## Cadence and recovery
-
-| Situation                            | Next poll                                                       |
-| ------------------------------------ | --------------------------------------------------------------- |
-| Success                              | configured interval                                             |
-| Transient failure                    | doubles per consecutive failure, up to a cap                    |
-| `429`                                | the server's `Retry-After`, never below the configured interval |
-| Expired credential or changed schema | long degraded interval                                          |
-
-A successful poll resets the escalation. _Refresh now_ has a minimum spacing
-between invocations, charged at the moment the request is accepted — so a burst
-of clicks cannot queue several polls in the window before the first response
-arrives.
-
-The undocumented endpoints publish no `RateLimit-*` headers, meaning there is no
-server-side signal to calibrate cadence against. The default interval is
-deliberately conservative, and shortening it is a gamble with account-level
-downside.
-
----
+Contributions should follow [CLAUDE.md](CLAUDE.md), which carries the
+architecture, the invariants that span packages, and the review checklist.
 
 ## Project layout
 
 ```
-cmd/meterai/            binary: wires the pieces and yields the main goroutine to the tray
-internal/quota/         vendor-neutral model and error taxonomy
-internal/credential/    location, parsing and caching of the credential file
-internal/provider/      quota.Provider implementations, one per vendor
-internal/poll/          scheduling and backoff
+cmd/meterai/            the binary: wires everything and yields the main goroutine to the tray
+internal/quota/         vendor-neutral model, error taxonomy, Provider interface
+internal/credential/    locating, parsing and caching the CLI credential file
+internal/provider/      quota.Provider implementations, one directory per vendor
+internal/poll/          scheduling, backoff and published state
+internal/identity/      account and configured model, read from the CLI's own documents
 internal/config/        user settings
 internal/i18n/          every user-visible string, one catalogue per language
-internal/identity/      account and configured model, read from the CLI's own documents
-internal/tray/          pure formatting (format.go) + platform glue
-internal/trayicon/      icon rendering in ICO format
+internal/tray/          presentation (pure) plus the Windows menu (platform glue)
+internal/trayicon/      ICO rendering for the notification area
+internal/buildinfo/     product name and version, shared by the binary and its outbound traffic
 ```
 
 Platform-specific code is isolated behind build tags in `_windows.go` and
-`_other.go`/`_unix.go` files. All logic that produces visible text or pixels is
-pure and lives in untagged files, which makes it testable on any host rather
-than only on Windows.
-
-> One toolchain detail worth remembering: Go **silently ignores** any directory
-> named `vendor`. A package placed there falls out of build, `vet` and tests
-> with no warning. That is why vendor implementations live under
-> `internal/provider/`.
-
----
+`_other.go`/`_unix.go` files; everything that produces visible text or pixels is
+pure and lives in untagged files, testable on any host.
 
 ## Adding a provider
 
-Implement `quota.Provider` in `internal/provider/<name>/`:
+Implement `quota.Provider` in `internal/provider/<name>/` — `Vendor() string` and
+`Fetch(ctx) (*quota.Snapshot, error)`. The core does not change to accommodate a
+new vendor. [CLAUDE.md §5](CLAUDE.md) states the full contract; the two things
+easiest to get wrong are classifying failures correctly, since that drives both
+retry cadence and the message shown, and treating every remote field as optional.
 
-```go
-type Provider interface {
-    Vendor() string
-    Fetch(ctx context.Context) (*quota.Snapshot, error)
-}
-```
+## Limitations
 
-The contract an implementation must honour:
+- **The quota endpoints are undocumented and unsupported.** They may change shape
+  or disappear without notice. The app treats that as an expected condition and
+  degrades with an explanation, but no interface that is not a contract can be
+  guaranteed.
+- **Icon precision.** The gauge is 24 pixel rows tall, roughly four percentage
+  points each; exact figures are in the menu and the tooltip.
+- **Dependence on the official CLI.** Without a prior login, and without use
+  keeping the token renewed, there is nothing to read.
 
-- Every returned failure is a `*quota.FetchError` with the correct kind — that
-  is what drives retry behaviour and the user-facing message.
-- `MeterID` uses the vendor prefix and stable values. It is also the key a
-  translation is looked up under, so renaming one silently drops the meter back
-  to its untranslated name.
-- `Snapshot.Product` is what the vendor sells ("Claude"), as opposed to `Vendor`,
-  which is the stable key ("anthropic"). It heads the menu, so a provider that
-  states none is displayed under its key instead.
-- A meter's `Label()` is the vendor's own kind string, not display text.
-  `internal/i18n` translates by `MeterID` and falls back to that raw kind, which
-  is what lets a window a vendor adds tomorrow appear without a code change.
-- No field of the remote response is mandatory. Undocumented endpoints change
-  shape without notice, so an unrecognizable document becomes `Protocol`, never
-  a panic or a zero value passing as valid.
-- Meter order within the `Snapshot` is significant: it sets row order in the UI
-  and determines which meters survive tooltip truncation.
-- Credentials arrive through the `CredentialSource` interface, so a provider
-  needs to know nothing about WSL, paths, or caching.
-
-The core does not change to accommodate a new vendor.
-
----
-
-## Tests
-
-```sh
-go test -race ./...              # includes tests that hit the real API
-go test -short -race ./...       # offline and deterministic only
-```
-
-Tests marked _live_ query the real endpoint and are skipped under `-short`. They
-are useful for detecting schema drift, but consume one request per run.
-
-The Anthropic provider's parser is checked against a fixture reproducing the
-real response shape, including internal codename fields with null values. That
-is what allows a schema change to be detected without network traffic.
-
----
-
-## Security
-
-The only secret handled is the OAuth token read from disk. The protections are
-structural rather than conventional:
-
-- The `credential.Secret` type overrides `String()`, `GoString()` and
-  `MarshalJSON()` to emit a redaction marker. An accidental
-  `log.Printf("%v", creds)` or `json.Marshal` is incapable of emitting the
-  token. A test fails the build if that property breaks.
-- The only place in the code that reveals the token is the outbound
-  `Authorization` header.
-- Go's default redirect policy strips `Authorization` on a cross-host redirect,
-  which prevents the token from being re-sent to another domain.
-- The refresh token is never carried into the in-memory credentials at all.
-  Since the app never refreshes, retaining a long-lived secret for the whole
-  session would be exposure bought for nothing.
-- No write path exists over the credential file.
-- Reads are size-bounded, both for the local file and for the HTTP response, so
-  a corrupt file or a hostile response cannot exhaust memory.
-
-The config file is created with owner-only permissions: it holds no secret, but
-it does hold a path into the credential store.
-
-Menu captions are the app's last hop before the shell, and three of the strings
-in them — the account name, the organization and a vendor's own label for a meter
-— arrive from documents this app only reads. Every field is neutralized on the way
-through `tray.MenuRowTitle`: an ampersand is doubled, since Windows consumes a
-single one as a keyboard mnemonic and drops the character after it from the
-caption; control characters become spaces, so a tab cannot open a second column
-break and throw a row's value out of its column; and format characters are
-dropped, since a bidirectional override draws nothing while reversing everything
-after it, which is enough to make one row read as another account. Catalogue text
-is exempt because it is written here rather than read, and a test fails the build
-if a translation ever carries one of those characters.
-
----
-
-## Inherent limitations
-
-- **The consumer-subscription quota endpoints are undocumented and
-  unsupported.** They may change shape or disappear without notice. The app
-  treats this as an expected condition — it reports and degrades — but there is
-  no way to guarantee continued operation against an interface that is not a
-  contract.
-- **Icon precision.** The gauge is 24 rows tall, roughly 4 percentage points per
-  row. Exact figures live in the tooltip and the menu.
-- **Dependence on the official CLI.** Without a prior login, and without
-  periodic use keeping the token renewed, there is nothing to read.
-
-## Reference
+## Acknowledgements
 
 `github.com/akitaonrails/ai-usagebar` — a Rust implementation for Linux, used as
-the initial source for the endpoints and response shape.
+the initial source for the endpoint and response shape.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

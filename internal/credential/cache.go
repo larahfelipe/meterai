@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -13,16 +14,17 @@ import (
 // minutes for no benefit. The file is re-read only when the cached token
 // approaches expiry, or when it was never read at all.
 //
-// INV: mu guards current and resolvedPath. Every read and write of either
-// field happens with mu held; Token is the only mutator and is safe for
+// INV: mu guards current, and Token is its only mutator; the cache is safe for
 // concurrent use by the poller and by a user-triggered manual refresh.
+// resolvedPath is atomic rather than guarded because Source must answer while a
+// reload holds mu — see Source.
 type Cache struct {
 	mu sync.Mutex
 	// current is the last successfully parsed credential set, or nil.
 	current *Credentials
 	// resolvedPath is the path current came from. Re-reading it directly skips
 	// the wsl.exe distro enumeration on the common path.
-	resolvedPath string
+	resolvedPath atomic.Pointer[string]
 
 	configuredPath string
 	skewMargin     time.Duration
@@ -70,7 +72,8 @@ func (c *Cache) Token(ctx context.Context) (*Credentials, error) {
 	}
 
 	c.current = fresh
-	c.resolvedPath = fresh.Source
+	source := fresh.Source
+	c.resolvedPath.Store(&source)
 	if !fresh.IsUsableAt(c.now(), c.skewMargin) {
 		return nil, &Failure{Kind: Expired, Path: fresh.Source,
 			Err: errors.New("the credential file on disk holds an expired access token; run the claude CLI once to renew it")}
@@ -82,8 +85,8 @@ func (c *Cache) Token(ctx context.Context) (*Credentials, error) {
 // discovery when that path no longer yields credentials (distro renamed, user
 // re-installed the CLI elsewhere).
 func (c *Cache) reload(ctx context.Context) (*Credentials, error) {
-	if c.resolvedPath != "" {
-		if fresh, err := Load(c.resolvedPath); err == nil {
+	if path := c.Source(); path != "" {
+		if fresh, err := Load(path); err == nil {
 			return fresh, nil
 		}
 	}
@@ -92,8 +95,14 @@ func (c *Cache) reload(ctx context.Context) (*Credentials, error) {
 
 // Source reports the path currently in use, or "" before the first successful
 // read. It is the only way to tell which of several candidate paths won.
+//
+// It deliberately takes no lock. The UI reads it on every menu update to decide
+// which installation it is describing, while the reload holding mu can take as
+// long as starting a stopped WSL distribution; blocking the UI behind that would
+// leave the tray unresponsive for as long as discovery runs.
 func (c *Cache) Source() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.resolvedPath
+	if path := c.resolvedPath.Load(); path != nil {
+		return *path
+	}
+	return ""
 }

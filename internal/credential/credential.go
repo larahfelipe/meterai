@@ -107,20 +107,17 @@ func (c *Credentials) IsUsableAt(t time.Time, skewMargin time.Duration) bool {
 }
 
 // document records the on-disk schema, which the CLI publishes nowhere and
-// which was established by inspection. Fields the app does not use are listed
-// so the format stays documented, but only the used ones reach Credentials.
-// The expiry values are epoch MILLISECONDS, not seconds.
+// which was established by inspection. It decodes only the three fields this app
+// uses: the same object also carries refreshToken, refreshTokenExpiresAt,
+// scopes, rateLimitTier and a sibling organizationUuid, and naming them here
+// would materialize them — the refresh token above all — as live strings in this
+// process for no purpose the app has. expiresAt is epoch MILLISECONDS.
 type document struct {
 	ClaudeAiOauth struct {
-		AccessToken           string   `json:"accessToken"`
-		RefreshToken          string   `json:"refreshToken"`
-		ExpiresAtMillis       int64    `json:"expiresAt"`
-		RefreshExpiresAtMilli int64    `json:"refreshTokenExpiresAt"`
-		Scopes                []string `json:"scopes"`
-		SubscriptionType      string   `json:"subscriptionType"`
-		RateLimitTier         string   `json:"rateLimitTier"`
+		AccessToken      string `json:"accessToken"`
+		ExpiresAtMillis  int64  `json:"expiresAt"`
+		SubscriptionType string `json:"subscriptionType"`
 	} `json:"claudeAiOauth"`
-	OrganizationUUID string `json:"organizationUuid"`
 }
 
 // maxCredentialBytes bounds the read so a corrupted or hostile file cannot

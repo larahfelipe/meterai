@@ -138,6 +138,37 @@ func TestIsPlainName(t *testing.T) {
 	}
 }
 
+// wsl.exe is a child process, and a child process is an unbounded producer: what
+// it writes has to stop growing this process's heap at a stated limit, while the
+// command itself still completes rather than failing on a short write.
+func TestBoundedBufferKeepsOnlyItsLimit(t *testing.T) {
+	const limit = 8
+	b := &boundedBuffer{limit: limit}
+
+	for _, chunk := range [][]byte{[]byte("12345"), []byte("6789"), []byte("overflow")} {
+		n, err := b.Write(chunk)
+		if err != nil {
+			t.Fatalf("Write(%q): %v", chunk, err)
+		}
+		if n != len(chunk) {
+			t.Errorf("Write(%q) = %d, want %d: a short write fails the command", chunk, n, len(chunk))
+		}
+	}
+	if got := string(b.Bytes()); got != "12345678" {
+		t.Errorf("Bytes() = %q, want the first %d bytes", got, limit)
+	}
+}
+
+func TestBoundedBufferWithNoRoomKeepsNothing(t *testing.T) {
+	b := &boundedBuffer{}
+	if n, err := b.Write([]byte("anything")); n != 8 || err != nil {
+		t.Fatalf("Write = (%d, %v), want (8, nil)", n, err)
+	}
+	if len(b.Bytes()) != 0 {
+		t.Errorf("Bytes() = %q, want nothing", b.Bytes())
+	}
+}
+
 func assertPaths(t *testing.T, got, want []string) {
 	t.Helper()
 	if len(got) != len(want) {

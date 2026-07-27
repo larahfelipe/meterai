@@ -172,6 +172,28 @@ func TestPollerBacksOffExponentiallyOnTransientFailure(t *testing.T) {
 	}
 }
 
+// Backoff exists to poll less often, never more. A cadence the user configured
+// past MaxBackoff is a slower one, so the cap must not pull it back down: an
+// hourly poller that starts failing must not begin polling every 30 minutes.
+func TestBackoffNeverPollsFasterThanTheConfiguredCadence(t *testing.T) {
+	transient := &quota.FetchError{Kind: quota.Transient, Vendor: "test", Err: errors.New("dial timeout")}
+	const slower = 2 * MaxBackoff
+
+	for failures := 1; failures <= 8; failures++ {
+		if got := backoff(transient, failures, slower); got < slower {
+			t.Errorf("failure %d: delay = %v, want at least the configured %v", failures, got, slower)
+		}
+	}
+	if got := backoff(transient, 8, slower); got != slower {
+		t.Errorf("delay = %v, want the cadence itself as the ceiling", got)
+	}
+	// A rate-limit instruction shorter than the cadence is already floored at it.
+	limited := &quota.FetchError{Kind: quota.RateLimited, Vendor: "test", RetryAfter: time.Second, Err: errors.New("429")}
+	if got := backoff(limited, 1, slower); got != slower {
+		t.Errorf("rate-limited delay = %v, want the configured %v", got, slower)
+	}
+}
+
 func TestPollerResetsBackoffAfterRecovery(t *testing.T) {
 	transient := &quota.FetchError{Kind: quota.Transient, Vendor: "test", Err: errors.New("dial timeout")}
 	provider := &scriptedProvider{script: []result{

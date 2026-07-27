@@ -81,19 +81,6 @@ func TestBalanceImplementsMeter(t *testing.T) {
 	}
 }
 
-func TestSeverityStringKnownValues(t *testing.T) {
-	cases := map[Severity]string{
-		SeverityNormal:   "normal",
-		SeverityWarning:  "warning",
-		SeverityCritical: "critical",
-	}
-	for sev, want := range cases {
-		if got := sev.String(); got != want {
-			t.Errorf("Severity(%d).String() = %q, want %q", sev, got, want)
-		}
-	}
-}
-
 func utilization(id MeterID, percent float64, active bool) *Utilization {
 	return &Utilization{MeterID: id, Percent: percent, IsActive: active, Level: SeverityNormal}
 }
@@ -159,10 +146,18 @@ func TestParseRetryAfter(t *testing.T) {
 		// A date already in the past means "retry now", not "wait forever".
 		"Sat, 25 Jul 2026 17:00:00 UTC": 0,
 		"nonsense":                      0,
+		// A delay large enough to overflow time.Duration must not come back
+		// negative, which the poller would read as "the vendor asked for nothing".
+		"9223372036854775807":           maxRetryAfter,
+		"999999999999":                  maxRetryAfter,
+		"Mon, 25 Jul 2050 18:00:00 UTC": maxRetryAfter,
 	}
 	for header, want := range cases {
 		if got := ParseRetryAfter(header, now); got != want {
 			t.Errorf("ParseRetryAfter(%q) = %v, want %v", header, got, want)
+		}
+		if got := ParseRetryAfter(header, now); got < 0 {
+			t.Errorf("ParseRetryAfter(%q) = %v, which is negative", header, got)
 		}
 	}
 }
@@ -203,6 +198,19 @@ func TestFetchErrorKindStringKnownValues(t *testing.T) {
 	for kind, want := range cases {
 		if got := kind.String(); got != want {
 			t.Errorf("FetchErrorKind(%d).String() = %q, want %q", kind, got, want)
+		}
+	}
+}
+
+func TestSeverityStringKnownValues(t *testing.T) {
+	cases := map[Severity]string{
+		SeverityNormal:   "normal",
+		SeverityWarning:  "warning",
+		SeverityCritical: "critical",
+	}
+	for sev, want := range cases {
+		if got := sev.String(); got != want {
+			t.Errorf("Severity(%d).String() = %q, want %q", sev, got, want)
 		}
 	}
 }

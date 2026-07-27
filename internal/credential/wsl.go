@@ -1,7 +1,8 @@
 package credential
 
 import (
-	"sort"
+	"bytes"
+	"slices"
 	"strings"
 )
 
@@ -21,7 +22,37 @@ const (
 	// slow enough that an unusual machine with hundreds of accounts would stall
 	// discovery; the cap keeps a pathological listing from becoming a hang.
 	maxWSLHomeDirs = 32
+
+	// maxWSLOutputBytes bounds what is kept from wsl.exe. The distribution list
+	// is a handful of names, but a child process is an unbounded producer: a
+	// wedged or replaced one must not be able to grow this process's heap, and
+	// decodeWSLOutput allocates in proportion to what it is handed.
+	maxWSLOutputBytes = 64 << 10
 )
+
+// boundedBuffer keeps the first limit bytes written to it and discards the rest.
+//
+// It reports every write as fully consumed. Returning a short count would make
+// os/exec tear the pipe down and fail the command for a reason unrelated to the
+// enumeration, whereas truncating output that is already past a limit no real
+// distribution list approaches is exactly the intended outcome.
+type boundedBuffer struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	accepted := len(p)
+	if room := b.limit - b.buf.Len(); room > 0 {
+		if accepted > room {
+			p = p[:room]
+		}
+		b.buf.Write(p)
+	}
+	return accepted, nil
+}
+
+func (b *boundedBuffer) Bytes() []byte { return b.buf.Bytes() }
 
 // wslCredentialPaths lists the credential files worth probing inside one
 // distribution, given its UNC root.
@@ -44,7 +75,7 @@ func wslCredentialPaths(distroRoot string, listDir func(string) ([]string, error
 	if homes, err := listDir(distroRoot + wslHomeParent); err == nil {
 		// Sorted so the same machine always yields the same order; a directory
 		// listing carries none of its own.
-		sort.Strings(homes)
+		slices.Sort(homes)
 		if len(homes) > maxWSLHomeDirs {
 			homes = homes[:maxWSLHomeDirs]
 		}

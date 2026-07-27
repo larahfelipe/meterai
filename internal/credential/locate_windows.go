@@ -13,11 +13,14 @@ import (
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"golang.org/x/sys/windows"
 )
 
-// Origin records how a candidate path was derived, so the UI can explain which
-// environment it is reading and so a WSL-backed source can be treated as
-// possibly-unavailable (distro stopped) rather than permanently gone.
+// Origin records how a candidate path was derived. It is what the containment
+// test asserts against: a WSL-derived path must stay inside the distribution it
+// names, and that check needs to know which candidates came from a filesystem
+// this app does not own.
 type Origin uint8
 
 const (
@@ -45,9 +48,12 @@ const (
 	// wslUNCRoot is the modern WSL2 network path. Preferred over the legacy
 	// \\wsl$ prefix, which remains only as a compatibility alias.
 	wslUNCRoot = `\\wsl.localhost`
-	// wslExe is resolved through PATH; on a WSL-enabled host it lives in
-	// System32 and is always present when the WSL feature is installed.
-	wslExe = "wsl.exe"
+	// wslExeName is the launcher the WSL optional component installs in the
+	// system directory. It is never resolved through PATH: a PATH lookup starts
+	// whichever executable of that name comes first, so any directory ahead of
+	// System32 that is writable by something other than an administrator becomes
+	// a way to have this process launch a program of someone else's choosing.
+	wslExeName = "wsl.exe"
 )
 
 // wslEnumTimeout bounds distro enumeration, which only queries the service
@@ -164,19 +170,38 @@ func listDistros(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// wslExecutable names the launcher by its absolute path under the real system
+// directory, which is what keeps a PATH entry from deciding what this process
+// executes. A host where the system directory cannot even be resolved has
+// nothing to enumerate, so the failure degrades discovery to the Windows-native
+// candidate rather than falling back to a search.
+func wslExecutable() (string, error) {
+	system32, err := windows.GetSystemDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(system32, wslExeName), nil
+}
+
 func runWSL(ctx context.Context, timeout time.Duration, args ...string) (string, error) {
+	executable, err := wslExecutable()
+	if err != nil {
+		return "", &Failure{Kind: Unreadable, Path: wslExeName, Err: err}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, wslExe, args...)
+	cmd := exec.CommandContext(ctx, executable, args...)
 	// WSL_UTF8 makes wsl.exe emit UTF-8 (WSL >= 0.64.0). decodeWSLOutput still
 	// handles UTF-16LE so that older builds keep working.
 	cmd.Env = append(os.Environ(), "WSL_UTF8=1")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := &boundedBuffer{limit: maxWSLOutputBytes}
+	stderr := &boundedBuffer{limit: maxWSLOutputBytes}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		return "", &Failure{Kind: Unreadable, Path: wslExe + " " + strings.Join(args, " "),
+		return "", &Failure{Kind: Unreadable, Path: wslExeName + " " + strings.Join(args, " "),
 			Err: errors.New(err.Error() + ": " + decodeWSLOutput(stderr.Bytes()))}
 	}
 	return decodeWSLOutput(stdout.Bytes()), nil

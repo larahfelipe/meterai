@@ -144,6 +144,33 @@ func TestCacheSurvivesTransientSourceOutage(t *testing.T) {
 	}
 }
 
+// Source is read by the UI on every menu update, while the lock it used to take
+// is held for the whole of a reload — which on Windows can mean starting a
+// stopped WSL distribution. It must answer regardless.
+func TestSourceDoesNotWaitOnAnInFlightReload(t *testing.T) {
+	expiry := time.Date(2026, 7, 25, 23, 0, 0, 0, time.UTC)
+	c, path, _ := newCacheOnFile(t, documentExpiringAt(expiry, "TOKEN-A"))
+	if _, err := c.Token(context.Background()); err != nil {
+		t.Fatalf("first Token: %v", err)
+	}
+
+	// Stand in for a reload in progress: Token holds this lock across the whole
+	// of Discover.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	answered := make(chan string, 1)
+	go func() { answered <- c.Source() }()
+	select {
+	case got := <-answered:
+		if got != path {
+			t.Errorf("Source = %q, want %q", got, path)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Source blocked behind the reload lock")
+	}
+}
+
 func TestCacheIsConcurrencySafe(t *testing.T) {
 	expiry := time.Date(2026, 7, 25, 23, 0, 0, 0, time.UTC)
 	c, _, _ := newCacheOnFile(t, documentExpiringAt(expiry, "TOKEN-A"))

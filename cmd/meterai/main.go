@@ -4,8 +4,6 @@
 // It is strictly a reader of credentials the official vendor CLIs already
 // wrote: it never performs an OAuth flow, never refreshes a token, and never
 // writes a credential file back. See package credential for why.
-//go:generate go run ../mkwinres meterai_windows_amd64.syso
-
 package main
 
 import (

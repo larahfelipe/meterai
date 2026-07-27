@@ -22,7 +22,11 @@ var lockPath = filepath.Join(os.TempDir(), "meterAI.lock")
 // This path exists for development on Linux; the shipping target is Windows,
 // where the guard is a named kernel mutex.
 func Acquire() (Release, error) {
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	// O_NOFOLLOW: the path is a fixed name in a world-writable directory, so
+	// another account can plant a symlink there and have this process open a file
+	// of its choosing. Refusing to follow one costs nothing here, since the file
+	// this creates is never anything but a lock.
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}

@@ -4,9 +4,12 @@ package credential
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 // This file is compiled only for Windows and is meant to be run as
@@ -58,6 +61,35 @@ func TestCandidatesPutTheConfiguredPathFirst(t *testing.T) {
 	}
 	if candidates[0].Origin != OriginConfigured {
 		t.Errorf("origin = %v, want OriginConfigured", candidates[0].Origin)
+	}
+}
+
+// The only executable this app ever starts must be named by its absolute path
+// under the real system directory. Resolving it through PATH would let any
+// directory ahead of System32 decide what this process launches.
+func TestWSLExecutableIgnoresPATH(t *testing.T) {
+	planted := t.TempDir()
+	if err := os.WriteFile(filepath.Join(planted, wslExeName), []byte("planted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", planted+";"+os.Getenv("PATH"))
+
+	got, err := wslExecutable()
+	if err != nil {
+		t.Fatalf("wslExecutable: %v", err)
+	}
+	system32, err := windows.GetSystemDirectory()
+	if err != nil {
+		t.Fatalf("GetSystemDirectory: %v", err)
+	}
+	if want := filepath.Join(system32, wslExeName); got != want {
+		t.Errorf("wslExecutable() = %q, want %q", got, want)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("wslExecutable() = %q, which is not absolute", got)
+	}
+	if strings.HasPrefix(got, planted) {
+		t.Errorf("wslExecutable() resolved to the planted copy at %q", got)
 	}
 }
 

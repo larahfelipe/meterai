@@ -2,6 +2,7 @@ package tray
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/larahfelipe/meterai/internal/config"
@@ -23,11 +24,7 @@ var intervalPresets = []time.Duration{
 
 // IntervalPresets lists the cadences a settings menu should offer, in ascending
 // order.
-func IntervalPresets() []time.Duration {
-	presets := make([]time.Duration, len(intervalPresets))
-	copy(presets, intervalPresets)
-	return presets
-}
+func IntervalPresets() []time.Duration { return slices.Clone(intervalPresets) }
 
 // IntervalLabel names a cadence in whole minutes or whole hours. A duration that
 // is neither falls back to Go's own formatting rather than being rounded into a

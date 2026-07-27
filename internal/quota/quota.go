@@ -27,6 +27,8 @@ const (
 	SeverityCritical
 )
 
+// String names a severity for diagnostics only. User-visible text never comes
+// from here: the UI resolves everything it draws through internal/i18n.
 func (s Severity) String() string {
 	switch s {
 	case SeverityNormal:
@@ -235,9 +237,16 @@ func (e *FetchError) Error() string {
 
 func (e *FetchError) Unwrap() error { return e.Err }
 
+// maxRetryAfter bounds the wait a vendor can ask for. A delay-seconds value
+// large enough to overflow time.Duration would otherwise come back negative and
+// be read as "no wait requested", which is the opposite of the instruction; a
+// day is already far past the point where the next poll is a fresh start.
+const maxRetryAfter = 24 * time.Hour
+
 // ParseRetryAfter interprets the Retry-After header, which RFC 9110 allows to
 // be either delay-seconds or an HTTP-date. now is a parameter because the
-// HTTP-date form has to be resolved against a clock.
+// HTTP-date form has to be resolved against a clock. The result is never
+// negative and never exceeds maxRetryAfter.
 func ParseRetryAfter(header string, now time.Time) time.Duration {
 	header = strings.TrimSpace(header)
 	if header == "" {
@@ -247,11 +256,14 @@ func ParseRetryAfter(header string, now time.Time) time.Duration {
 		if seconds <= 0 {
 			return 0
 		}
+		if seconds > int64(maxRetryAfter/time.Second) {
+			return maxRetryAfter
+		}
 		return time.Duration(seconds) * time.Second
 	}
 	if at, err := time.Parse(time.RFC1123, header); err == nil {
 		if d := at.Sub(now); d > 0 {
-			return d
+			return min(d, maxRetryAfter)
 		}
 	}
 	return 0

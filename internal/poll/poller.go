@@ -77,6 +77,8 @@ type Poller struct {
 	refresh chan struct{}
 }
 
+// discardState is the sink for a Poller built without an update callback: the
+// state stays readable through State, so there is nothing to publish.
 func discardState(State) {}
 
 // New builds a Poller. An interval below DefaultInterval is raised to it:
@@ -214,14 +216,21 @@ func backoff(err error, consecutiveFailures int, interval time.Duration) time.Du
 			return DegradedInterval
 		}
 	}
-	// The cap in the loop condition bounds the doubling, so an unbounded
+	// The ceiling is never below the configured cadence: a user who asked to be
+	// polled hourly must not start being polled every MaxBackoff because a poll
+	// failed, which is backoff producing the one thing it exists to prevent.
+	ceiling := MaxBackoff
+	if interval > ceiling {
+		ceiling = interval
+	}
+	// The ceiling in the loop condition bounds the doubling, so an unbounded
 	// failure count cannot overflow the duration.
 	delay := interval
-	for i := 1; i < consecutiveFailures && delay < MaxBackoff; i++ {
+	for i := 1; i < consecutiveFailures && delay < ceiling; i++ {
 		delay *= 2
 	}
-	if delay > MaxBackoff {
-		return MaxBackoff
+	if delay > ceiling {
+		return ceiling
 	}
 	return delay
 }

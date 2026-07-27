@@ -173,7 +173,7 @@ func TestLoadFillsMissingFieldsFromDefaults(t *testing.T) {
 	if time.Duration(cfg.PollInterval) != 10*time.Minute {
 		t.Errorf("PollInterval = %v", time.Duration(cfg.PollInterval))
 	}
-	if cfg.WarnAtPercent != defaultWarnPercent || cfg.CriticalAtPercent != defaultCriticalPercent {
+	if cfg.UsageAlerts != quota.DefaultThresholds() {
 		t.Errorf("missing fields were not defaulted: %+v", cfg)
 	}
 }
@@ -206,16 +206,21 @@ func TestValidate(t *testing.T) {
 			func(c *Config) { c.PollInterval = Duration(10 * time.Second) }, "pollInterval",
 		},
 		"warn threshold at zero": {
-			func(c *Config) { c.WarnAtPercent = 0 }, "warnAtPercent",
+			func(c *Config) { c.UsageAlerts.WarnAtPercent = 0 }, "warnAtPercent",
 		},
 		"warn threshold above the ceiling": {
-			func(c *Config) { c.WarnAtPercent = 101 }, "warnAtPercent",
+			func(c *Config) { c.UsageAlerts.WarnAtPercent = 101 }, "warnAtPercent",
 		},
 		"critical threshold above the ceiling": {
-			func(c *Config) { c.CriticalAtPercent = 150 }, "criticalAtPercent",
+			func(c *Config) { c.UsageAlerts.CriticalAtPercent = 150 }, "criticalAtPercent",
 		},
 		"critical below warn is unreachable": {
-			func(c *Config) { c.WarnAtPercent, c.CriticalAtPercent = 90, 60 }, "unreachable",
+			func(c *Config) { c.UsageAlerts = quota.Thresholds{WarnAtPercent: 90, CriticalAtPercent: 60} }, "unreachable",
+		},
+		// A threshold failure has to name the group it sits in as well as the
+		// field, since the document nests them.
+		"the group is named alongside the field": {
+			func(c *Config) { c.UsageAlerts.WarnAtPercent = -1 }, "usageAlerts",
 		},
 	}
 	for name, tc := range cases {
@@ -239,31 +244,6 @@ func TestValidate(t *testing.T) {
 	atFloor.PollInterval = Duration(poll.DefaultInterval)
 	if err := atFloor.Validate(); err != nil {
 		t.Errorf("the exact minimum cadence must be accepted: %v", err)
-	}
-}
-
-func TestSeverityForCombinesVendorAndLocalThresholds(t *testing.T) {
-	cfg := Default() // warn 75, critical 90
-	cases := []struct {
-		percent float64
-		vendor  quota.Severity
-		want    quota.Severity
-	}{
-		{10, quota.SeverityNormal, quota.SeverityNormal},
-		{74, quota.SeverityNormal, quota.SeverityNormal},
-		// The case that motivates local thresholds: the vendor called 75%
-		// normal, the user wants a warning.
-		{75, quota.SeverityNormal, quota.SeverityWarning},
-		{89.9, quota.SeverityNormal, quota.SeverityWarning},
-		{90, quota.SeverityNormal, quota.SeverityCritical},
-		// The vendor is never overruled downward.
-		{5, quota.SeverityCritical, quota.SeverityCritical},
-		{80, quota.SeverityCritical, quota.SeverityCritical},
-	}
-	for _, tc := range cases {
-		if got := cfg.SeverityFor(tc.percent, tc.vendor); got != tc.want {
-			t.Errorf("SeverityFor(%v, %v) = %v, want %v", tc.percent, tc.vendor, got, tc.want)
-		}
 	}
 }
 
@@ -370,5 +350,124 @@ func TestLoadPreservesAnExplicitLanguage(t *testing.T) {
 	}
 	if got.Language != want.Language {
 		t.Errorf("Language = %q, want %q", got.Language, want.Language)
+	}
+}
+
+func TestSaveAndLoadRoundTripTheUsageAlerts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), fileName)
+	want := Default()
+	want.UsageAlerts = quota.Thresholds{WarnAtPercent: 60, CriticalAtPercent: 85}
+	if err := Save(path, want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The user edits this file by hand, so the group has to be visible as a
+	// group rather than as two keys that happen to be adjacent.
+	if !strings.Contains(string(raw), `"usageAlerts": {`) {
+		t.Errorf("thresholds are not written as one object:\n%s", raw)
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got != want {
+		t.Errorf("Load = %+v, want %+v", got, want)
+	}
+}
+
+func TestLoadMigratesTheFlatThresholdsOfEarlierReleases(t *testing.T) {
+	cases := map[string]struct {
+		document string
+		want     quota.Thresholds
+	}{
+		"both thresholds carried over": {
+			`{"pollInterval":"10m","warnAtPercent":60,"criticalAtPercent":85}`,
+			quota.Thresholds{WarnAtPercent: 60, CriticalAtPercent: 85},
+		},
+		// A document that tuned one and left the other at the default must not
+		// lose the one it set.
+		"one threshold carried over, the other defaulted": {
+			`{"warnAtPercent":50}`,
+			quota.Thresholds{WarnAtPercent: 50, CriticalAtPercent: quota.DefaultThresholds().CriticalAtPercent},
+		},
+		// Once the current shape is present it is authoritative, so a file that
+		// carries both resolves to what this release writes rather than to a
+		// merge of two generations of the document.
+		"the current shape wins over a stale flat pair": {
+			`{"usageAlerts":{"warnAtPercent":55,"criticalAtPercent":65},"warnAtPercent":95,"criticalAtPercent":99}`,
+			quota.Thresholds{WarnAtPercent: 55, CriticalAtPercent: 65},
+		},
+		// A partial current shape is still the current shape: the missing half
+		// comes from the defaults, not from the legacy key beside it.
+		"a partial current shape does not fall back to the flat pair": {
+			`{"usageAlerts":{"warnAtPercent":55},"criticalAtPercent":99}`,
+			quota.Thresholds{WarnAtPercent: 55, CriticalAtPercent: quota.DefaultThresholds().CriticalAtPercent},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), fileName)
+			if err := os.WriteFile(path, []byte(tc.document), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.UsageAlerts != tc.want {
+				t.Errorf("UsageAlerts = %+v, want %+v", cfg.UsageAlerts, tc.want)
+			}
+		})
+	}
+}
+
+// Migration is a read, never a write: Load must not rewrite a file it could
+// still parse, because the user may be running two releases against it.
+func TestLoadDoesNotRewriteALegacyDocument(t *testing.T) {
+	path := filepath.Join(t.TempDir(), fileName)
+	const original = `{"warnAtPercent":60,"criticalAtPercent":85}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != original {
+		t.Errorf("Load rewrote the document:\n%s", raw)
+	}
+}
+
+// A migrated pair goes through the same gate as any other: carrying an invalid
+// one forward silently would put the app in a state its own menu cannot produce.
+func TestLoadValidatesMigratedThresholds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), fileName)
+	if err := os.WriteFile(path, []byte(`{"warnAtPercent":95,"criticalAtPercent":60}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("an inverted legacy pair must not load")
+	}
+}
+
+func TestUnmarshalRejectsMalformedThresholds(t *testing.T) {
+	for _, raw := range []string{
+		`{"usageAlerts":[]}`,
+		`{"usageAlerts":{"warnAtPercent":"75"}}`,
+		`{"warnAtPercent":"75"}`,
+		`{"warnAtPercent":true}`,
+	} {
+		cfg := Default()
+		if err := json.Unmarshal([]byte(raw), &cfg); err == nil {
+			t.Errorf("Unmarshal(%s) must fail, got %+v", raw, cfg)
+		}
 	}
 }

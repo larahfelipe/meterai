@@ -90,6 +90,9 @@ const (
 	MenuRefresh Key = iota + 1
 	MenuProviders
 	MenuSettings
+	MenuUsageAlerts
+	MenuWarnThreshold
+	MenuCriticalThreshold
 	MenuInterval
 	MenuLanguage
 	IntervalMinutes
@@ -125,37 +128,40 @@ const (
 )
 
 var keyNames = [keyCount]string{
-	MenuRefresh:          "MenuRefresh",
-	MenuProviders:        "MenuProviders",
-	MenuSettings:         "MenuSettings",
-	MenuInterval:         "MenuInterval",
-	MenuLanguage:         "MenuLanguage",
-	IntervalMinutes:      "IntervalMinutes",
-	IntervalHours:        "IntervalHours",
-	SettingsSaveFailed:   "SettingsSaveFailed",
-	AccountName:          "AccountName",
-	AccountEmail:         "AccountEmail",
-	AccountOrganization:  "AccountOrganization",
-	EffortLevel:          "EffortLevel",
-	MenuQuit:             "MenuQuit",
-	RefreshRejected:      "RefreshRejected",
-	MeterResetSuffix:     "MeterResetSuffix",
-	BalanceUsedOfLimit:   "BalanceUsedOfLimit",
-	CountdownNow:         "CountdownNow",
-	CountdownUnderMinute: "CountdownUnderMinute",
-	CountdownMinutes:     "CountdownMinutes",
-	CountdownHours:       "CountdownHours",
-	CountdownDays:        "CountdownDays",
-	StatusFirstPoll:      "StatusFirstPoll",
-	StatusUpdated:        "StatusUpdated",
-	StatusUpdatedBrief:   "StatusUpdatedBrief",
-	StatusStale:          "StatusStale",
-	ErrorUnauthorized:    "ErrorUnauthorized",
-	ErrorRateLimited:     "ErrorRateLimited",
-	ErrorTransient:       "ErrorTransient",
-	ErrorProtocol:        "ErrorProtocol",
-	ErrorUnrecognized:    "ErrorUnrecognized",
-	ErrorUnexpected:      "ErrorUnexpected",
+	MenuRefresh:           "MenuRefresh",
+	MenuProviders:         "MenuProviders",
+	MenuSettings:          "MenuSettings",
+	MenuUsageAlerts:       "MenuUsageAlerts",
+	MenuWarnThreshold:     "MenuWarnThreshold",
+	MenuCriticalThreshold: "MenuCriticalThreshold",
+	MenuInterval:          "MenuInterval",
+	MenuLanguage:          "MenuLanguage",
+	IntervalMinutes:       "IntervalMinutes",
+	IntervalHours:         "IntervalHours",
+	SettingsSaveFailed:    "SettingsSaveFailed",
+	AccountName:           "AccountName",
+	AccountEmail:          "AccountEmail",
+	AccountOrganization:   "AccountOrganization",
+	EffortLevel:           "EffortLevel",
+	MenuQuit:              "MenuQuit",
+	RefreshRejected:       "RefreshRejected",
+	MeterResetSuffix:      "MeterResetSuffix",
+	BalanceUsedOfLimit:    "BalanceUsedOfLimit",
+	CountdownNow:          "CountdownNow",
+	CountdownUnderMinute:  "CountdownUnderMinute",
+	CountdownMinutes:      "CountdownMinutes",
+	CountdownHours:        "CountdownHours",
+	CountdownDays:         "CountdownDays",
+	StatusFirstPoll:       "StatusFirstPoll",
+	StatusUpdated:         "StatusUpdated",
+	StatusUpdatedBrief:    "StatusUpdatedBrief",
+	StatusStale:           "StatusStale",
+	ErrorUnauthorized:     "ErrorUnauthorized",
+	ErrorRateLimited:      "ErrorRateLimited",
+	ErrorTransient:        "ErrorTransient",
+	ErrorProtocol:         "ErrorProtocol",
+	ErrorUnrecognized:     "ErrorUnrecognized",
+	ErrorUnexpected:       "ErrorUnexpected",
 }
 
 func (k Key) String() string {

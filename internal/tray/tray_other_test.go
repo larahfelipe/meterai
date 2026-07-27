@@ -30,10 +30,10 @@ func TestRenderWritesEveryMeterAndTheStatusLine(t *testing.T) {
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	// A blank line, the instant, the app heading, the active provider, one line
 	// per meter, the status line, that provider's entry in the list and the row
-	// heading the submenu behind it, then the two settings rows. No CLI documents
+	// heading the submenu behind it, then the five settings rows. No CLI documents
 	// are given here, so neither the preferences row nor any account row appears.
-	if len(lines) != 11 {
-		t.Fatalf("output has %d lines, want 11:\n%s", len(lines), out.String())
+	if len(lines) != 14 {
+		t.Fatalf("output has %d lines, want 14:\n%s", len(lines), out.String())
 	}
 	if !strings.Contains(lines[1], now.Format("2006-01-02")) {
 		t.Errorf("banner = %q, want the observation instant", lines[1])
@@ -60,8 +60,16 @@ func TestRenderWritesEveryMeterAndTheStatusLine(t *testing.T) {
 	if !strings.Contains(lines[8], "Claude Pro") {
 		t.Errorf("submenu heading = %q, want the plan", lines[8])
 	}
-	if !strings.Contains(lines[9], "5 min") || !strings.Contains(lines[10], "English (US)") {
-		t.Errorf("settings lines = %q, %q", lines[9], lines[10])
+	// The usage-alert group states the pair, and each threshold restates its own
+	// half one level in, exactly as the menu does.
+	if !strings.Contains(lines[9], "75%") || !strings.Contains(lines[9], "90%") {
+		t.Errorf("usage alerts line = %q, want both thresholds", lines[9])
+	}
+	if !strings.Contains(lines[10], "75%") || !strings.Contains(lines[11], "90%") {
+		t.Errorf("threshold lines = %q, %q", lines[10], lines[11])
+	}
+	if !strings.Contains(lines[12], "5 min") || !strings.Contains(lines[13], "English (US)") {
+		t.Errorf("settings lines = %q, %q", lines[12], lines[13])
 	}
 }
 
@@ -108,18 +116,31 @@ func TestRenderBeforeTheFirstPollWritesNoReading(t *testing.T) {
 
 	// Nothing has been read yet, so every meter row is absent: a blank line, the
 	// instant, the app heading, the provider named from its key, the status line,
-	// the provider's list entry and submenu heading, and the two settings rows.
-	if got := strings.Count(out.String(), "\n"); got != 9 {
+	// the provider's list entry and submenu heading, and the five settings rows.
+	if got := strings.Count(out.String(), "\n"); got != 12 {
 		t.Errorf("output has %d lines: %q", got, out.String())
 	}
 	if !strings.Contains(out.String(), "Polling…") {
 		t.Errorf("output = %q, does not disclose that no reading exists yet", out.String())
 	}
 	// The vendor key is known before the first poll; nothing the poll would have
-	// supplied may be invented alongside it.
+	// supplied may be invented alongside it. The settings block below is not part
+	// of that claim — its figures are the thresholds, which are known from the
+	// config file and are the one place a percentage legitimately precedes a poll.
+	readings, settings, found := strings.Cut(out.String(), "Usage alerts")
+	if !found {
+		t.Fatalf("output = %q, does not reach the settings block", out.String())
+	}
 	for _, unwanted := range []string{"Claude", "%"} {
-		if strings.Contains(out.String(), unwanted) {
+		if strings.Contains(readings, unwanted) {
 			t.Errorf("output = %q, invents %q before the first poll", out.String(), unwanted)
+		}
+	}
+	// And the thresholds are stated in full even so, because they describe how the
+	// first reading will be classified rather than a reading of their own.
+	for _, want := range []string{"75%", "90%"} {
+		if !strings.Contains(settings, want) {
+			t.Errorf("settings block %q does not state the threshold %q", settings, want)
 		}
 	}
 }

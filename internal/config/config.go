@@ -23,17 +23,6 @@ const (
 	appDirName = "meterAI"
 	fileName   = "config.json"
 
-	// defaultWarnPercent and defaultCriticalPercent are local thresholds
-	// applied on top of the vendor's own severity. They exist because vendors
-	// report "normal" well past the point a user wants warning: the observed
-	// Anthropic response called 74% of the weekly allowance normal.
-	defaultWarnPercent     = 75.0
-	defaultCriticalPercent = 90.0
-
-	// percentCeiling bounds threshold configuration. A threshold above 100
-	// could never fire, which is a silent misconfiguration.
-	percentCeiling = 100.0
-
 	// configFileMode keeps the file readable only by its owner. It holds no
 	// secret today, but it does hold a path into the user's credential store.
 	configFileMode = 0o600
@@ -72,9 +61,12 @@ type Config struct {
 	// are rejected rather than silently corrected, so a user who sets 10s finds
 	// out why it will not happen.
 	PollInterval Duration `json:"pollInterval"`
-	// WarnAtPercent and CriticalAtPercent escalate the tray icon locally.
-	WarnAtPercent     float64 `json:"warnAtPercent"`
-	CriticalAtPercent float64 `json:"criticalAtPercent"`
+	// UsageAlerts is the local escalation policy: where a reading starts being
+	// a warning, and where it becomes critical. It is nested rather than flat
+	// because it is the first of what the menu presents as one group of
+	// consumption settings, and a group in the UI reads better as a group in
+	// the document a user edits by hand.
+	UsageAlerts quota.Thresholds `json:"usageAlerts"`
 	// Language is a BCP 47 tag with a catalogue in internal/i18n. Empty means
 	// the default catalogue, so a document written before this field existed
 	// keeps working.
@@ -84,11 +76,50 @@ type Config struct {
 // Default returns the settings used when no file exists yet.
 func Default() Config {
 	return Config{
-		PollInterval:      Duration(poll.DefaultInterval),
-		WarnAtPercent:     defaultWarnPercent,
-		CriticalAtPercent: defaultCriticalPercent,
-		Language:          string(i18n.DefaultLang),
+		PollInterval: Duration(poll.DefaultInterval),
+		UsageAlerts:  quota.DefaultThresholds(),
+		Language:     string(i18n.DefaultLang),
 	}
+}
+
+// UnmarshalJSON fills the document, preserving whatever the receiver already
+// holds for keys the file omits — which is what lets Load seed it with the
+// defaults and have a partial document validate.
+//
+// It also accepts the flat shape written before usageAlerts existed. Ignoring
+// those keys would silently revert a hand-tuned pair to the defaults on
+// upgrade, which is exactly the kind of change to a user's settings this app
+// must not make without saying so.
+func (c *Config) UnmarshalJSON(raw []byte) error {
+	// document has Config's fields but not its method set, so unmarshalling
+	// into it cannot recurse back into here.
+	type document Config
+	doc := document(*c)
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return err
+	}
+	*c = Config(doc)
+
+	var legacy struct {
+		UsageAlerts       *json.RawMessage `json:"usageAlerts"`
+		WarnAtPercent     *float64         `json:"warnAtPercent"`
+		CriticalAtPercent *float64         `json:"criticalAtPercent"`
+	}
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		return err
+	}
+	// The current shape wins outright when present, so a document carrying both
+	// resolves to the one this release writes rather than to a merge of the two.
+	if legacy.UsageAlerts != nil {
+		return nil
+	}
+	if legacy.WarnAtPercent != nil {
+		c.UsageAlerts.WarnAtPercent = *legacy.WarnAtPercent
+	}
+	if legacy.CriticalAtPercent != nil {
+		c.UsageAlerts.CriticalAtPercent = *legacy.CriticalAtPercent
+	}
+	return nil
 }
 
 // Catalog resolves the language into the catalogue the UI renders from. Validate
@@ -103,23 +134,6 @@ func (c Config) Catalog() *i18n.Catalog {
 	return i18n.For(lang)
 }
 
-// SeverityFor combines the vendor's own assessment with the local thresholds,
-// taking whichever is more severe. The vendor is never overruled downward: if
-// Anthropic says critical, the icon says critical regardless of local settings.
-func (c Config) SeverityFor(percent float64, vendor quota.Severity) quota.Severity {
-	local := quota.SeverityNormal
-	switch {
-	case percent >= c.CriticalAtPercent:
-		local = quota.SeverityCritical
-	case percent >= c.WarnAtPercent:
-		local = quota.SeverityWarning
-	}
-	if vendor > local {
-		return vendor
-	}
-	return local
-}
-
 // Validate reports why a document cannot be used. Every failure names the field
 // and the bound it violated, because the user fixes this by hand in an editor.
 func (c Config) Validate() error {
@@ -127,15 +141,8 @@ func (c Config) Validate() error {
 		return fmt.Errorf("pollInterval is %s; the minimum safe cadence against these undocumented endpoints is %s",
 			interval, poll.DefaultInterval)
 	}
-	if c.WarnAtPercent <= 0 || c.WarnAtPercent > percentCeiling {
-		return fmt.Errorf("warnAtPercent is %v; it must be in (0,%v]", c.WarnAtPercent, percentCeiling)
-	}
-	if c.CriticalAtPercent <= 0 || c.CriticalAtPercent > percentCeiling {
-		return fmt.Errorf("criticalAtPercent is %v; it must be in (0,%v]", c.CriticalAtPercent, percentCeiling)
-	}
-	if c.CriticalAtPercent < c.WarnAtPercent {
-		return fmt.Errorf("criticalAtPercent (%v) is below warnAtPercent (%v); the critical threshold would be unreachable",
-			c.CriticalAtPercent, c.WarnAtPercent)
+	if err := c.UsageAlerts.Validate(); err != nil {
+		return fmt.Errorf("usageAlerts: %w", err)
 	}
 	if _, err := i18n.Parse(c.Language); err != nil {
 		return fmt.Errorf("language is invalid: %w", err)

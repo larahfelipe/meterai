@@ -91,6 +91,9 @@ func render(w io.Writer, presenter *Presenter, subs Subscriptions, now time.Time
 			writeRow(w, indent(row))
 		}
 	}
+	writeRow(w, presenter.UsageAlertsRow())
+	writeRow(w, indent(presenter.WarnThresholdRow()))
+	writeRow(w, indent(presenter.CriticalThresholdRow()))
 	writeRow(w, presenter.IntervalRow())
 	writeRow(w, presenter.LanguageRow())
 }

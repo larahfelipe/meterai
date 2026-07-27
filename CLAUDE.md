@@ -61,7 +61,7 @@ pieces connect; nothing below it learns a file path, a vendor or a platform it d
 
 | Package | Owns | Must not know about |
 |---|---|---|
-| `internal/quota` | the vendor-neutral model, the fetch-error taxonomy, the `Provider` interface | anything in this project |
+| `internal/quota` | the vendor-neutral model, the fetch-error taxonomy, the local escalation thresholds, the `Provider` interface | anything in this project |
 | `internal/credential` | locating, parsing and caching the CLI credential file; WSL enumeration | vendors, HTTP, the UI |
 | `internal/provider/<vendor>` | one vendor's endpoint and response shape | WSL, paths, the config file, the UI |
 | `internal/poll` | cadence, backoff, published state | vendors, the UI |
@@ -148,11 +148,15 @@ test asserts every preset survives `config.Validate`.
 
 ### 3.5 A settings change is persisted before it is applied
 
-The tray derives a whole document through `tray.WithInterval`/`WithLanguage`, which validate the
+The tray derives a whole document through one `tray.With*` function per setting, which validate the
 entire config rather than the changed field, then persists it through `Wiring.SaveSettings` — the
 tray never learns the config path. Only after the write succeeds does the change reach the poller
 and the presenter, so the menu can never show a state that is not on disk. A new cadence governs the
-delay computed after the next poll; a timer already waiting is never cut short.
+delay computed after the next poll; a timer already waiting is never cut short. A new threshold, by
+contrast, reclassifies the reading already on screen: `apply` re-renders from the same snapshot.
+
+Adding a setting is adding a `With*`, a row, and its widgets to `newMenuView`, `retitle` and
+`syncSettingChecks`. Nothing else in the tray learns about it.
 
 ### 3.6 Persisted keys versus display text
 
@@ -164,7 +168,7 @@ vendor knowledge and is identical in every language.
 
 ### 3.7 Meter order is load-bearing
 
-It sets menu row order and decides which meters survive the tooltip budget (§3.12) and the fixed
+It sets menu row order and decides which meters survive the tooltip budget (§3.13) and the fixed
 `maxMeterRows = 6` menu slots. Never sort it, never build it by iterating a map. It also decides
 which row states a shared reset countdown: `Presenter.MeterRows` suppresses one that repeats the row
 immediately above, so reordering moves the countdown to a different row.
@@ -242,14 +246,38 @@ an organization, a vendor's own meter label. `&` is consumed as a mnemonic marke
 character opens a spurious column break, a `Cf` override reverses the row. Every field is
 neutralized there, and an i18n test asserts no catalogue string needs it.
 
-### 3.10 Numbers
+### 3.10 The two usage-alert thresholds are an ordered pair, and the menu keeps them so
+
+`quota.Thresholds` owns the whole rule — the defaults, the bounds, the
+percent→`Severity` mapping and its validation — because that mapping is what
+`Severity` means locally. `config.Config` composes one under `usageAlerts` and
+adds nothing to it; anything that classifies a reading goes through
+`cfg.UsageAlerts.SeverityFor`, and nothing anywhere carries a threshold of its
+own. `Config.UnmarshalJSON` also reads the flat `warnAtPercent`/`criticalAtPercent`
+of earlier releases, so an upgrade never silently reverts a tuned pair.
+
+`CriticalAtPercent` must be **strictly above** `WarnAtPercent`: `SeverityFor`
+tests critical first, so an equal pair is a warning level that exists in the
+settings and can never be displayed.
+
+`tray.WarnPresets`/`CriticalPresets` are one list with the one end each cannot
+hold removed, and `tray.WithWarnThreshold`/`WithCriticalThreshold` take the
+chosen value and step the *other* threshold to the adjacent preset when the pair
+would otherwise invert. That is what keeps a rejection unreachable through the
+UI: a Windows popup menu has no per-item hover text (§3.8), so a greyed item
+cannot say why it is greyed, and an error line in place of a choice the menu
+itself offered is worse than moving a companion the user can see move. Both
+parent rows carry their value, and `syncSettingChecks` resyncs *both* lists after
+either change, because one of them moved without being clicked.
+
+### 3.11 Numbers
 
 **Money never passes through `float64`**: `quota.Money` is minor units and `Exponent` is
 presentation only. **`Percent` is not clamped at 100** in the model — a vendor's overage figure is
 preserved; only `trayicon.Render` and `tray.progressBar` clamp, for display, and they quantize by
 the same rule so the icon and the menu can never disagree.
 
-### 3.11 Concurrency and time
+### 3.12 Concurrency and time
 
 - **`tray.Run` must own the main goroutine** on Windows: systray locks the OS thread holding the
   message loop. The poller runs in a goroutine, and `updates` is a capacity-1 *signal* rather than a
@@ -261,7 +289,7 @@ the same rule so the icon and the menu can never disagree.
   `anthropic.Provider.now`, and explicit `now` parameters throughout `internal/tray`. Keep new code
   in this shape or its tests become clock-dependent.
 
-### 3.12 The tooltip has 63 characters, and no line may lose its figure
+### 3.13 The tooltip has 63 characters, and no line may lose its figure
 
 `NOTIFYICONDATA.szTip` is declared as 128 WCHARs, but the shell only honours that for an icon that
 announced itself through `NIM_SETVERSION`. systray never issues it, so the shell reads the legacy

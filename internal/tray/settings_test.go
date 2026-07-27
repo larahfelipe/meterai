@@ -8,6 +8,7 @@ import (
 	"github.com/larahfelipe/meterai/internal/config"
 	"github.com/larahfelipe/meterai/internal/i18n"
 	"github.com/larahfelipe/meterai/internal/poll"
+	"github.com/larahfelipe/meterai/internal/quota"
 )
 
 func TestIntervalPresetsStartAtTheFloorAndAscend(t *testing.T) {
@@ -104,7 +105,13 @@ func TestSettingsRowsCarryTheValueInForce(t *testing.T) {
 // menu that does not align.
 func TestSettingsRowsUseTheValueColumn(t *testing.T) {
 	presenter := presenterFor(t, i18n.LangEnUS)
-	for _, row := range []Row{presenter.IntervalRow(), presenter.LanguageRow()} {
+	for _, row := range []Row{
+		presenter.IntervalRow(),
+		presenter.LanguageRow(),
+		presenter.UsageAlertsRow(),
+		presenter.WarnThresholdRow(),
+		presenter.CriticalThresholdRow(),
+	} {
 		title := MenuRowTitle(row)
 		if strings.Count(title, menuRightAlign) != 1 {
 			t.Errorf("title %q must carry exactly one column break", title)
@@ -155,7 +162,7 @@ func TestWithIntervalKeepsEveryOtherField(t *testing.T) {
 	base := config.Default()
 	base.CredentialPath = "/pinned/.claude/.credentials.json"
 	base.Language = string(i18n.LangPtBR)
-	base.WarnAtPercent, base.CriticalAtPercent = 60, 80
+	base.UsageAlerts = quota.Thresholds{WarnAtPercent: 60, CriticalAtPercent: 80}
 
 	changed, err := WithInterval(base, 30*time.Minute)
 	if err != nil {
@@ -208,7 +215,7 @@ func TestConfigRoundTripsThroughThePresenter(t *testing.T) {
 	// document the Presenter actually renders with.
 	cfg := config.Default()
 	cfg.Language = string(i18n.LangPtBR)
-	cfg.WarnAtPercent = 55
+	cfg.UsageAlerts.WarnAtPercent = 55
 	if got := NewPresenter(cfg).Config(); got != cfg {
 		t.Errorf("Config() = %+v, want %+v", got, cfg)
 	}

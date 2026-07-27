@@ -8,17 +8,23 @@ import "github.com/larahfelipe/meterai/internal/quota"
 var enUS = &Catalog{
 	lang: LangEnUS,
 	messages: map[Key]string{
-		MenuRefresh:         "Refresh now",
-		MenuProviders:       "Providers",
-		MenuSettings:        "Settings",
-		MenuInterval:        "Update every",
-		MenuLanguage:        "Language",
-		IntervalMinutes:     "%d min",
-		IntervalHours:       "%d h",
-		SettingsSaveFailed:  "Settings could not be saved — check the config file",
-		AccountName:         "Account",
-		AccountEmail:        "E-mail",
-		AccountOrganization: "Organization",
+		MenuRefresh:   "Refresh now",
+		MenuProviders: "Providers",
+		MenuSettings:  "Settings",
+		// Sentence case, like every other multi-word caption in the menu. The
+		// two thresholds name the level they open rather than the reading they
+		// compare against, because the reading is in the value column beside them.
+		MenuUsageAlerts:       "Usage alerts",
+		MenuWarnThreshold:     "Warning threshold",
+		MenuCriticalThreshold: "Critical threshold",
+		MenuInterval:          "Update every",
+		MenuLanguage:          "Language",
+		IntervalMinutes:       "%d min",
+		IntervalHours:         "%d h",
+		SettingsSaveFailed:    "Settings could not be saved — check the config file",
+		AccountName:           "Account",
+		AccountEmail:          "E-mail",
+		AccountOrganization:   "Organization",
 		// The configured value is interpolated title-cased, so the qualifier around
 		// it carries the same case: the row is one label, not a sentence, and
 		// "High" alone names nothing.

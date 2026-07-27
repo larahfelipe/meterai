@@ -444,9 +444,7 @@ func (p *Presenter) meterTitle(meter quota.Meter, now time.Time, statesReset boo
 func (p *Presenter) figure(meter quota.Meter) string {
 	switch m := meter.(type) {
 	case *quota.Utilization:
-		// The percent sign is not translated: it is universal in both catalogues
-		// and a verb lost in a future translation would corrupt the figure.
-		return fmt.Sprintf("%.0f%%", m.Percent)
+		return percentText(m.Percent)
 	case *quota.Balance:
 		if m.Limit != nil {
 			return p.catalog.Text(i18n.BalanceUsedOfLimit, m.Used, *m.Limit)
@@ -454,6 +452,18 @@ func (p *Presenter) figure(meter quota.Meter) string {
 		return m.Used.String()
 	}
 	return ""
+}
+
+// percentText renders a percentage at the whole-point precision every figure in
+// this UI is read at, for a meter's own reading and for the thresholds it is
+// escalated against alike — the two are compared by eye, so they are written
+// the same way.
+//
+// The percent sign is not translated: it is universal in both catalogues, and a
+// sign lost in a future translation would corrupt the figure rather than reword
+// it.
+func percentText(percent float64) string {
+	return fmt.Sprintf("%.0f%%", percent)
 }
 
 // meterBar renders a gauge only for a meter whose percentage is bounded by an
@@ -638,5 +648,5 @@ func (p *Presenter) IconState(sub Subscription) (percent float64, level quota.Se
 	case *quota.Balance:
 		percent = m.Percent
 	}
-	return percent, p.cfg.SeverityFor(percent, primary.Severity()), sub.State.LastError != nil
+	return percent, p.cfg.UsageAlerts.SeverityFor(percent, primary.Severity()), sub.State.LastError != nil
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/larahfelipe/meterai/internal/config"
 	"github.com/larahfelipe/meterai/internal/i18n"
+	"github.com/larahfelipe/meterai/internal/quota"
 	"github.com/larahfelipe/meterai/internal/trayicon"
 )
 
@@ -41,11 +42,19 @@ func onReady(ctx context.Context, wiring Wiring) {
 	// by ctx, keeps the event loop a fixed shape.
 	intervalChosen := make(chan time.Duration)
 	languageChosen := make(chan i18n.Lang)
+	warnChosen := make(chan float64)
+	criticalChosen := make(chan float64)
 	for i, preset := range IntervalPresets() {
 		forwardChoice(ctx, view.intervalItems[i].ClickedCh, intervalChosen, preset)
 	}
 	for i, lang := range i18n.Available() {
 		forwardChoice(ctx, view.languageItems[i].ClickedCh, languageChosen, lang)
+	}
+	for i, preset := range WarnPresets() {
+		forwardChoice(ctx, view.warnItems[i].ClickedCh, warnChosen, preset)
+	}
+	for i, preset := range CriticalPresets() {
+		forwardChoice(ctx, view.criticalItems[i].ClickedCh, criticalChosen, preset)
 	}
 
 	view.apply(time.Now())
@@ -69,6 +78,10 @@ func onReady(ctx context.Context, wiring Wiring) {
 				view.changeSettings(WithInterval(view.presenter.Config(), interval))
 			case lang := <-languageChosen:
 				view.changeSettings(WithLanguage(view.presenter.Config(), lang))
+			case percent := <-warnChosen:
+				view.changeSettings(WithWarnThreshold(view.presenter.Config(), percent))
+			case percent := <-criticalChosen:
+				view.changeSettings(WithCriticalThreshold(view.presenter.Config(), percent))
 			case <-wiring.Updates:
 				view.apply(time.Now())
 			}
@@ -138,11 +151,19 @@ type menuView struct {
 	providersMenu *systray.MenuItem
 	providerRows  []providerEntry
 
-	settings      *systray.MenuItem
-	intervalMenu  *systray.MenuItem
-	intervalItems []*systray.MenuItem
-	languageMenu  *systray.MenuItem
-	languageItems []*systray.MenuItem
+	settings *systray.MenuItem
+	// The usage-alert thresholds are one group of their own inside Settings:
+	// they are read against each other, and grouping them keeps the settings
+	// list one entry per topic as more consumption settings arrive.
+	usageAlertsMenu *systray.MenuItem
+	warnMenu        *systray.MenuItem
+	warnItems       []*systray.MenuItem
+	criticalMenu    *systray.MenuItem
+	criticalItems   []*systray.MenuItem
+	intervalMenu    *systray.MenuItem
+	intervalItems   []*systray.MenuItem
+	languageMenu    *systray.MenuItem
+	languageItems   []*systray.MenuItem
 
 	quit *systray.MenuItem
 
@@ -192,6 +213,15 @@ func newMenuView(wiring Wiring) *menuView {
 	}
 
 	view.settings = systray.AddMenuItem("", "")
+	// What the figures mean comes before how often they are fetched, and both
+	// before the language the whole menu is written in: the list descends from
+	// the reading, through the reading's freshness, to the app itself.
+	view.usageAlertsMenu = view.settings.AddSubMenuItem("", "")
+	view.warnMenu = view.usageAlertsMenu.AddSubMenuItem("", "")
+	view.warnItems = addPercentChoices(view.warnMenu, WarnPresets(), view.currentAlerts().WarnAtPercent)
+	view.criticalMenu = view.usageAlertsMenu.AddSubMenuItem("", "")
+	view.criticalItems = addPercentChoices(view.criticalMenu, CriticalPresets(), view.currentAlerts().CriticalAtPercent)
+
 	view.intervalMenu = view.settings.AddSubMenuItem("", "")
 	presets := IntervalPresets()
 	view.intervalItems = make([]*systray.MenuItem, len(presets))
@@ -247,8 +277,25 @@ func addReadout() *systray.MenuItem {
 	return item
 }
 
+// addPercentChoices allocates one tickable item per preset under parent.
+//
+// Unlike the cadences, these captions are never rewritten: a percentage carries
+// no translatable text, so the caption a preset gets here is the one it keeps
+// for the life of the process whatever language the rest of the menu is in.
+func addPercentChoices(parent *systray.MenuItem, presets []float64, current float64) []*systray.MenuItem {
+	items := make([]*systray.MenuItem, len(presets))
+	for i, preset := range presets {
+		items[i] = parent.AddSubMenuItemCheckbox(percentText(preset), "", preset == current)
+	}
+	return items
+}
+
 func (v *menuView) currentInterval() time.Duration {
 	return time.Duration(v.presenter.Config().PollInterval)
+}
+
+func (v *menuView) currentAlerts() quota.Thresholds {
+	return v.presenter.Config().UsageAlerts
 }
 
 // subscriptions reads the current state of every configured provider, in
@@ -309,10 +356,11 @@ func (v *menuView) changeSettings(changed config.Config, err error) {
 }
 
 // retitle rewrites every caption that is not rewritten by the render path: the
-// fixed commands, and the two settings rows that carry the value in force beside
-// their name. It runs at startup and after a settings change, because language is
-// the one setting that alters text apply never touches and a new cadence has to
-// reach the row that displays it.
+// fixed commands, and the settings rows that carry the value in force beside
+// their name. It runs at startup and after a settings change, because language
+// is the one setting that alters text apply never touches, and because a changed
+// value has to reach the row that displays it — including the companion
+// threshold, which moves without having been clicked.
 func (v *menuView) retitle() {
 	catalog := v.presenter.catalog
 	for _, item := range []struct {
@@ -326,8 +374,18 @@ func (v *menuView) retitle() {
 	} {
 		item.widget.SetTitle(catalog.Text(item.title))
 	}
-	v.intervalMenu.SetTitle(MenuRowTitle(v.presenter.IntervalRow()))
-	v.languageMenu.SetTitle(MenuRowTitle(v.presenter.LanguageRow()))
+	for _, row := range []struct {
+		widget *systray.MenuItem
+		row    Row
+	}{
+		{v.usageAlertsMenu, v.presenter.UsageAlertsRow()},
+		{v.warnMenu, v.presenter.WarnThresholdRow()},
+		{v.criticalMenu, v.presenter.CriticalThresholdRow()},
+		{v.intervalMenu, v.presenter.IntervalRow()},
+		{v.languageMenu, v.presenter.LanguageRow()},
+	} {
+		row.widget.SetTitle(MenuRowTitle(row.row))
+	}
 	for i, preset := range IntervalPresets() {
 		v.intervalItems[i].SetTitle(v.presenter.IntervalLabel(preset))
 	}
@@ -344,6 +402,15 @@ func (v *menuView) syncSettingChecks() {
 	active := v.presenter.catalog.Lang()
 	for i, lang := range i18n.Available() {
 		setChecked(v.languageItems[i], lang == active)
+	}
+	// Both threshold lists are resynced after either change, because setting one
+	// past the other moves the one the user did not click.
+	alerts := v.currentAlerts()
+	for i, preset := range WarnPresets() {
+		setChecked(v.warnItems[i], preset == alerts.WarnAtPercent)
+	}
+	for i, preset := range CriticalPresets() {
+		setChecked(v.criticalItems[i], preset == alerts.CriticalAtPercent)
 	}
 }
 

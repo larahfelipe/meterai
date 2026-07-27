@@ -30,8 +30,8 @@ credentials the official CLI already wrote, so there is nothing to log into.
 - **No login.** It reads the token the official CLI stored and never modifies it.
 - **Finds the credential itself**, whether the CLI was installed on native
   Windows or inside a WSL2 distribution.
-- **Settings in the menu** — polling cadence and interface language (`en-US`,
-  `pt-BR`), applied without a restart.
+- **Settings in the menu** — the usage-alert thresholds, the polling cadence and
+  the interface language (`en-US`, `pt-BR`), applied without a restart.
 - **Small footprint by design**: one process created, one network destination,
   two files written, no registry key, no startup entry, no elevation.
 
@@ -90,10 +90,10 @@ Run `meterAI.exe`. The icon appears in the notification area.
   opens on the plan and the account behind it — name, e-mail, organization.
   Account details live there rather than on the first level, which is what keeps
   an address off the screen until it is asked for.
-- **Settings** show the value in force beside their name and change the update
-  cadence and the language without a restart. Each change is written to the
-  config file before it is applied, so the menu never shows a setting that is not
-  on disk.
+- **Settings** show the value in force beside their name and change the usage
+  alerts, the update cadence and the language without a restart. Each change is
+  written to the config file before it is applied, so the menu never shows a
+  setting that is not on disk.
 
 Only one instance runs per Windows logon session, enforced by a named kernel
 mutex; a second copy exits quietly with code `3`. Two users on the same machine
@@ -115,29 +115,54 @@ permissions and replaced atomically on every write:
 {
   "credentialPath": "",
   "pollInterval": "5m0s",
-  "warnAtPercent": 75,
-  "criticalAtPercent": 90,
+  "usageAlerts": {
+    "warnAtPercent": 75,
+    "criticalAtPercent": 90
+  },
   "language": "en-US"
 }
 ```
 
-| Field               | Meaning                                                                                                     |
-| ------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `credentialPath`    | Explicit path to the CLI credential file. Empty enables autodiscovery.                                      |
-| `pollInterval`      | Polling cadence. Below the safe minimum of 5 minutes it is rejected with a message, not silently corrected. |
-| `warnAtPercent`     | Local warning threshold.                                                                                    |
-| `criticalAtPercent` | Local critical threshold, at or above `warnAtPercent`.                                                      |
-| `language`          | `en-US` (default) or `pt-BR`.                                                                               |
+| Field                             | Meaning                                                                                                     |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `credentialPath`                  | Explicit path to the CLI credential file. Empty enables autodiscovery.                                      |
+| `pollInterval`                    | Polling cadence. Below the safe minimum of 5 minutes it is rejected with a message, not silently corrected. |
+| `usageAlerts.warnAtPercent`       | Where a reading starts counting as a warning.                                                                |
+| `usageAlerts.criticalAtPercent`   | Where it becomes critical. Must be above `warnAtPercent`.                                                   |
+| `language`                        | `en-US` (default) or `pt-BR`.                                                                               |
 
-`pollInterval` and `language` are also editable from the _Settings_ submenu,
-which writes this same file.
+Everything but `credentialPath` is editable from the _Settings_ submenu, which
+writes this same file. Earlier releases stored the two thresholds at the top
+level of the document; a file in that shape is still read, and the values in it
+are kept.
+
+### Usage alerts
+
+_Settings → Usage alerts_ holds the two thresholds, each on its own submenu of
+percentages, with the value in force stated beside the name so nothing has to be
+opened to read it:
+
+```text
+Usage alerts                    75% • 90%
+    Warning threshold                 75%
+    Critical threshold                90%
+```
+
+The warning threshold is always below the critical one. Rather than refuse a
+choice, the menu keeps the pair in order for you: setting one past the other
+moves the other to the next percentage that keeps them apart, and both rows
+update, so a threshold is never a click that does nothing. The two values with
+nowhere to go on the far side — the ceiling for a warning, the floor for a
+critical — are simply not offered.
 
 A populated `credentialPath` is **authoritative**: if that path fails, the app
 reports an error instead of looking elsewhere, since falling through would mean
 silently monitoring a different account than the pinned one.
 
-Local thresholds are combined with the vendor's own severity and the more severe
-of the two wins; the vendor is never overruled downward. A config file that
+These thresholds are combined with the vendor's own severity and the more severe
+of the two wins; the vendor is never overruled downward. They drive every place
+usage is classified, the tray icon's colour included, and a change applies to the
+reading already on screen without waiting for the next poll. A config file that
 exists but cannot be parsed is an error and is never overwritten, and missing
 fields are filled from the defaults, so documents written by earlier releases
 keep working.

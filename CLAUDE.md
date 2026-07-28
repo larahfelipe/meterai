@@ -39,6 +39,60 @@ the suite, and anything moved out of them into pure code closes part of it.
 `CGO_ENABLED=0` is a requirement, not a convenience: it is what allows cross-compilation with no C
 toolchain. Never add a dependency that needs CGO.
 
+### 1.1 What CI runs, and what it cannot
+
+`.github/workflows/ci.yml` is §9.8 executed on every push and pull request against `master`. It
+holds no build knowledge of its own: the compile step is the release command above, character for
+character, and changing one without the other is the drift the duplication exists to make visible.
+
+It differs from the local loop in four ways, each deliberate:
+
+- A `windows-2022` job runs `go test -short ./...` natively, which is the only way the
+  Windows-tagged tests run without WSL binfmt. It omits `-race`, since that would pull a C toolchain
+  onto the runner to re-check code the Linux job already raced.
+- The binary is compiled twice and the two results compared, because README promises a byte-identical
+  executable per commit and a promise nothing checks is a wish. The second build is a separate job on
+  a fresh runner with the build cache disabled: on one machine, back to back, `-trimpath` has already
+  removed every variable the comparison could have caught. `GOTOOLCHAIN: local` is what keeps it
+  meaningful either way — a silently downloaded compiler is a different binary. Both jobs run the
+  release command character for character, `-o` included, so what they compare is a digest rather
+  than two files with different names.
+- `govulncheck` runs against the host target and against `GOOS=windows`, for the same reason `go vet`
+  runs twice: the `_windows.go` files are invisible to a host-target analysis. It is pinned to a
+  version, never `@latest`, so the gate cannot change meaning between two runs of one commit.
+- The live test never runs: `-short` everywhere, because CI holds no credential and never will.
+
+Only `publish` waits on all of it. The build itself is gated on nothing, because it consumes no
+output of the validators and parking it behind the slowest runner only delayed the release; a pull
+request that fails a lint still produces a binary to inspect. The consequence is that an artifact
+existing does not imply the commit passed — `publish` is the only place that may draw that
+conclusion, and it is the only place that does.
+
+On `master` it then replaces the `edge` prerelease with the artifact it just validated — downloaded,
+not rebuilt, so the published bytes are the bytes that passed. What proves they are is a digest the
+build job published as a job *output*: the `.sha256` sidecar travels inside the artifact, so anything
+able to substitute the binary can substitute the sidecar with it, and `sha256sum -c` alone would
+prove only that the archive did not corrupt in transit. The sidecar is still checked, for the one
+thing it can establish — that the file users download agrees with the hash they download beside it.
+
+`build` also attests the binary's provenance (`actions/attest-build-provenance`, Sigstore-signed through
+this run's own OIDC identity, no key this repository holds or could leak) and is the only job carrying
+`id-token: write` and `attestations: write` — a job's `permissions:` block replaces the workflow-level
+default rather than adding to it, so those two scopes exist nowhere else, including `publish`, which
+only serves what `build` already signed. Every `uses:` in the file names a 40-hex commit SHA rather than
+a tag, with the tag it resolved to at pinning time kept as a trailing comment: a tag is the one thing in
+this pipeline its owner, not this repository, controls the meaning of, and repointing it would run
+inside a job holding this repository's `GITHUB_TOKEN`.
+
+The tag is `edge` rather than `master` because a tag sharing a branch's name makes every later
+`git rev-parse master` ambiguous. Publishing is delete-then-create: `gh release edit` cannot move an
+existing tag, so an amended release would go on naming the commit that first created it. That is also
+why a push is never cancelled mid-run (`cancel-in-progress` is true for pull requests only) — a run
+killed between the delete and the create leaves no release at all. The pair is retried as a unit for
+the same reason, each attempt re-running the delete: the window between them is the one state README
+says cannot exist, and re-running the delete is also what absorbs the `422` the API returns while a
+just-deleted tag ref is still propagating.
+
 ---
 
 ## 2. Architecture

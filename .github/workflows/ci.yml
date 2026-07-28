@@ -1,0 +1,379 @@
+# Validates every change against the review checklist in CLAUDE.md §9, then
+# cross-compiles the Windows binary with the exact command README documents as
+# the release build, and republishes it as the rolling `edge` prerelease.
+#
+# Every `uses:` below names a 40-hex commit SHA, with the tag it resolved to at
+# the time of pinning kept as a trailing comment — a tag can be repointed by its
+# owner at code that would then run with this repository's GITHUB_TOKEN; a SHA
+# cannot. Re-derive and bump deliberately, never silently:
+#   gh api repos/actions/checkout/commits/v5 --jq .sha
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  # Republishing `edge` after a transient API failure, without an empty commit.
+  workflow_dispatch:
+
+# A superseded pull-request run has nothing left to say and is cancelled. A
+# superseded push to master must not be: `publish` replaces a shared release,
+# and a run killed between the delete and the create would leave the repository
+# with no edge build at all. Pushes to the same ref queue instead, so the last
+# one to run is the last one pushed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Read-only for every job. Only `publish` widens this, and only to contents.
+permissions:
+  contents: read
+
+# One shell dialect everywhere, including the Windows runner, whose default is
+# pwsh. Without this, the first `[ -n "$x" ]` added to that job fails obscurely.
+defaults:
+  run:
+    shell: bash
+
+env:
+  # The toolchain go.mod names is the one that builds; none of these jobs may
+  # silently download a newer one, because a different compiler is a different
+  # binary and the reproducibility check below would be testing nothing.
+  GOTOOLCHAIN: local
+
+jobs:
+  validate:
+    name: Validate (Linux host)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the commit under test
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Install the toolchain go.mod pins
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          # Restores the module and build caches, keyed on go.sum.
+          cache: true
+
+      # Cheapest check first: it needs no network and catches the most common
+      # oversight.
+      - name: Formatting is canonical (gofmt)
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would rewrite the following files; run 'gofmt -w .'"
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Dependency graph matches go.mod, and every module verifies
+        run: |
+          go mod download
+          go mod verify
+          go mod tidy -diff
+
+      - name: Vet reports nothing for the host target
+        run: go vet ./...
+
+      # The Windows-only files are excluded from every Linux build, so a clean
+      # host run does not prove the shipping build compiles (CLAUDE.md §1).
+      - name: Vet reports nothing for the Windows target
+        run: GOOS=windows go vet ./...
+
+      - name: Tests pass under the race detector
+        run: go test -short -race ./...
+
+  validate-windows:
+    name: Validate (Windows host)
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Check out the commit under test
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Install the toolchain go.mod pins
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # This job exists for the Windows-tagged tests, which no Linux host can
+      # execute. The race detector already ran over the shared code in the job
+      # above; enabling it here would pull in a C toolchain for no new coverage.
+      - name: Windows-tagged tests pass
+        run: go test -short ./...
+
+  vulnerabilities:
+    name: No known vulnerabilities
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the commit under test
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Install the toolchain go.mod pins
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Pinned, not `@latest`: a new release must not change what this gate
+      # means between two runs of the same commit. A `go install` version tag
+      # is not the floating-tag risk a `uses:` is — the Go module proxy is
+      # content-addressed and checksummed against sum.golang.org, so `@v1.6.0`
+      # cannot silently resolve to different code the way a git tag can.
+      # GOTOOLCHAIN is relaxed for this one command because the tool's own
+      # go.mod may name a newer toolchain than this module does.
+      - name: Install govulncheck
+        env:
+          GOTOOLCHAIN: auto
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+
+      # Two targets for the same reason `go vet` runs twice: the _windows.go
+      # files are invisible to a host-target analysis.
+      - name: Scan the host target
+        run: govulncheck ./...
+
+      - name: Scan the Windows target
+        run: GOOS=windows govulncheck ./...
+
+  build:
+    name: Build meterAI.exe
+    # Deliberately gated on nothing: this job consumes no output of the
+    # validators, and `publish` is where the gate belongs. Keeping it here only
+    # parked the release behind the slowest runner.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # A job-level block replaces the workflow-level default for that job
+    # rather than adding to it, so `contents: read` is restated alongside the
+    # two scopes the attestation step needs. Neither travels beyond this job:
+    # `publish` never signs anything, it only serves what was already signed.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      # Travels through the run's own state rather than inside the artifact,
+      # which is what makes the check in `publish` mean something.
+      sha256: ${{ steps.digest.outputs.sha256 }}
+    steps:
+      - name: Check out the commit under test
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Install the toolchain go.mod pins
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Byte-for-byte the command README documents as the release build, and
+      # byte-for-byte the command the `reproduce` job runs. It is duplicated
+      # rather than parameterised so that what ships, what the documentation
+      # tells a reader to run, and what is checked for reproducibility cannot
+      # drift apart unnoticed.
+      - name: Cross-compile the release binary
+        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H=windowsgui" -o dist/meterAI.exe ./cmd/meterai
+
+      - name: Record the digest and the sidecar users verify against
+        id: digest
+        working-directory: dist
+        run: |
+          sha256sum meterAI.exe > meterAI.exe.sha256
+          sha256="$(cut -d ' ' -f 1 meterAI.exe.sha256)"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          {
+            echo "### meterAI.exe"
+            echo
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| commit | \`${GITHUB_SHA}\` |"
+            echo "| bytes | $(wc -c < meterAI.exe) |"
+            echo "| sha256 | \`${sha256}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A SLSA provenance predicate for this exact file, signed through
+      # Sigstore using the OIDC identity of this workflow run — not a secret
+      # this repository manages, and nothing an attacker gains by reading the
+      # log. It answers a question the sidecar and the artifact digest cannot:
+      # not just "does this hash match" but "did this repository's CI produce
+      # this file, from this commit, in this public run". Verified with
+      # `gh attestation verify meterAI.exe --repo larahfelipe/meterai`.
+      - name: Attest the binary's provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: dist/meterAI.exe
+
+      # Named for the commit, so a downloaded binary can always be traced back
+      # to the source it was built from. `overwrite` is what makes re-running a
+      # finished run land on the same artifact instead of failing on its name.
+      - name: Publish the run artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: meterAI-${{ github.sha }}
+          path: |
+            dist/meterAI.exe
+            dist/meterAI.exe.sha256
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
+  # README promises the same commit and toolchain yield a byte-identical
+  # executable, which is the whole worth of publishing a hash. Building twice on
+  # one runner proved almost nothing: same machine, same directory, same warm
+  # build cache, and `-trimpath` had already removed the only other variable.
+  # A separate runner with a cold cache is the cheapest build where those
+  # variables actually differ. It stays on Linux: a Windows host would vary the
+  # build OS, which is more than README claims.
+  reproduce:
+    name: The release build is reproducible
+    needs: [build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the commit under test
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Install the toolchain go.mod pins
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          # A restored build cache would reintroduce the variable this job
+          # exists to hold independent.
+          cache: false
+
+      - name: Cross-compile the release binary
+        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H=windowsgui" -o dist/meterAI.exe ./cmd/meterai
+
+      - name: The digest matches the one the build job recorded
+        working-directory: dist
+        env:
+          EXPECTED_SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          actual="$(sha256sum meterAI.exe | cut -d ' ' -f 1)"
+          if [ "$actual" != "$EXPECTED_SHA256" ]; then
+            echo "::error::a second runner built $actual where the build job built $EXPECTED_SHA256; the release build is not reproducible"
+            exit 1
+          fi
+          echo "Reproduced $actual on an independent runner with a cold build cache."
+
+  publish:
+    name: Publish the edge release
+    needs: [validate, validate-windows, vulnerabilities, build, reproduce]
+    # Never on a pull request: a fork's branch must not be able to move a
+    # release, and the token it runs with is read-only anyway. A manual dispatch
+    # is confined to master by the same condition, and only a collaborator with
+    # write access can trigger one.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # Downloading rather than rebuilding is what guarantees the published
+      # bytes are the bytes that were validated, not a second compilation that
+      # merely ought to match.
+      - name: Retrieve the binary built from this commit
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: meterAI-${{ github.sha }}
+          path: dist
+
+      # Two checks, two distinct failures. The first compares against a digest
+      # that travelled outside the artifact, so it detects a substituted
+      # artifact — which `sha256sum -c` alone cannot, since anything able to
+      # replace the binary can replace its sidecar. The second proves the
+      # sidecar users will download agrees with the binary they will download.
+      - name: The binary is the one the build job produced
+        working-directory: dist
+        env:
+          EXPECTED_SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          actual="$(sha256sum meterAI.exe | cut -d ' ' -f 1)"
+          if [ "$actual" != "$EXPECTED_SHA256" ]; then
+            echo "::error::artifact digest $actual does not match the $EXPECTED_SHA256 recorded at build time"
+            exit 1
+          fi
+          sha256sum -c meterAI.exe.sha256
+
+      # The tag is `edge`, not `master`: a tag sharing a branch's name makes
+      # every later `git rev-parse master` ambiguous, permanently.
+      #
+      # Delete-then-create is what keeps this idempotent. `gh release edit`
+      # cannot move an existing tag, so a release amended in place would keep
+      # pointing at whichever commit first created it, and re-running a run
+      # would accumulate assets rather than replace them.
+      #
+      # The pair is retried as a unit because the window between them is the one
+      # state README says cannot exist — no edge release at all. Each attempt
+      # re-runs the delete, which also absorbs the 422 the API returns when a
+      # just-deleted tag ref has not yet propagated.
+      #
+      # The heredoc body sits at this block scalar's own indentation: YAML
+      # strips it, leaving EOF in column 0. Reindenting one line breaks it.
+      - name: Replace the edge release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EDGE_TAG: edge
+          MAX_ATTEMPTS: '3'
+        run: |
+          notes="$(cat <<EOF
+          Rolling build of \`master\`, replaced on every push. Not a versioned release.
+
+          | | |
+          | --- | --- |
+          | commit | \`${GITHUB_SHA}\` |
+          | built by | [run ${GITHUB_RUN_ID}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) |
+
+          Verify the download with \`sha256sum -c meterAI.exe.sha256\`.
+
+          The executable is unsigned: Windows SmartScreen warns the first time it runs.
+          EOF
+          )"
+
+          replace_edge_release() {
+            if gh release view "$EDGE_TAG" >/dev/null 2>&1; then
+              echo "Removing the previous $EDGE_TAG release and its tag."
+              gh release delete "$EDGE_TAG" --yes --cleanup-tag
+            fi
+            gh release create "$EDGE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "meterAI edge (${GITHUB_SHA:0:7})" \
+              --notes "$notes" \
+              --prerelease \
+              dist/meterAI.exe dist/meterAI.exe.sha256
+          }
+
+          published=''
+          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+            if replace_edge_release; then
+              published='yes'
+              break
+            fi
+            echo "::warning::attempt $attempt of $MAX_ATTEMPTS failed; retrying"
+            sleep $((attempt * 10))
+          done
+
+          if [ -z "$published" ]; then
+            echo "::error::could not replace $EDGE_TAG; the repository has no edge release until the next push or a manual re-run"
+            exit 1
+          fi
+
+          {
+            echo "### Published"
+            echo
+            gh release view "$EDGE_TAG" --json url --jq .url
+          } >> "$GITHUB_STEP_SUMMARY"

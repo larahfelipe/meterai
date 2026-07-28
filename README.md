@@ -62,7 +62,22 @@ CGO.
 
 ## Install
 
-There is no release build yet; produce one with:
+There is no versioned release yet. Every push to `master` publishes the binary
+it built as the rolling [`edge`](https://github.com/larahfelipe/meterai/releases/tag/edge)
+prerelease, together with the SHA-256 recorded at build time — check a download
+with `sha256sum -c meterAI.exe.sha256`. That release is replaced in place on
+every push, so it names no version and only ever describes the current tip. The
+executable is unsigned: SmartScreen warns the first time it runs.
+
+The checksum proves the download matches what CI recorded; it says nothing about
+who built it. For that, verify the binary was produced by this repository's own
+workflow, not merely by someone holding a hash that matches:
+
+```sh
+gh attestation verify meterAI.exe --repo larahfelipe/meterai
+```
+
+To produce the same binary yourself:
 
 ```sh
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
@@ -71,7 +86,8 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
 
 The build cross-compiles from Linux, WSL or macOS with no C toolchain, and is
 reproducible: the same commit and toolchain produce a byte-identical executable,
-so a published hash means something.
+so a published hash means something. CI compiles each commit on two independent
+runners and refuses to publish if the two results differ.
 
 ## Usage
 
@@ -209,6 +225,14 @@ update to stderr, so the whole pipeline — credential discovery, polling, backo
 formatting — can be exercised where the credentials actually live. Because the
 Windows-only files are excluded from a local build, `GOOS=windows go vet ./...`
 is part of the loop rather than an afterthought.
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs that same loop on
+every push and pull request against `master`, and adds the two checks a local
+run does not: a Windows runner executing the Windows-tagged tests, and
+`govulncheck` over both targets. It cross-compiles the binary alongside them and
+attaches it to the run, so a pull request that fails a check still leaves
+something to inspect; only once everything passes does it — on `master` alone —
+replace the `edge` release with that same artifact.
 
 Contributions should follow [CLAUDE.md](CLAUDE.md), which carries the
 architecture, the invariants that span packages, and the review checklist.

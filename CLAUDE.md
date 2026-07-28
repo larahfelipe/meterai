@@ -1,8 +1,9 @@
 # meterAI — engineering guide
 
-Windows notification-area monitor for AI subscription usage quotas. Go 1.25.5, module
-`github.com/larahfelipe/meterai`. One binary, no CGO. Ships for Windows; developed, tested and
-cross-compiled on Linux/WSL.
+Windows notification-area monitor for AI subscription usage quotas. Go 1.25 (go.mod names the exact
+patch; the vulnerability gate in CI forces it forward whenever the standard library it shipped with
+gets a disclosed CVE), module `github.com/larahfelipe/meterai`. One binary, no CGO. Ships for
+Windows; developed, tested and cross-compiled on Linux/WSL.
 
 This file is the contract for changing the code: architecture, invariants, conventions and the bar a
 change has to clear. [README.md](README.md) is the user-facing document — what the app does, how to

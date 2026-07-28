@@ -1,6 +1,6 @@
 module github.com/larahfelipe/meterai
 
-go 1.25.5
+go 1.25.12
 
 require (
 	fyne.io/systray v1.12.2

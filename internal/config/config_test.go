@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -39,9 +40,22 @@ func TestLoadCreatesDefaultsWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestDefaultPathUsesTheXDGConfigDirectory(t *testing.T) {
-	dir := t.TempDir()
+// os.UserConfigDir resolves through a different environment variable per OS —
+// XDG_CONFIG_HOME on Unix, %AppData% on Windows — and honors only that one, so
+// a test pinning the Unix variable alone would silently pass on Unix while
+// asserting nothing on a Windows runner.
+func setUserConfigDirEnv(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Setenv("AppData", dir)
+		return
+	}
 	t.Setenv("XDG_CONFIG_HOME", dir)
+}
+
+func TestDefaultPathUsesTheOSConfigDirectory(t *testing.T) {
+	dir := t.TempDir()
+	setUserConfigDirEnv(t, dir)
 
 	got, err := DefaultPath()
 	if err != nil {
@@ -53,8 +67,12 @@ func TestDefaultPathUsesTheXDGConfigDirectory(t *testing.T) {
 }
 
 func TestDefaultPathSurfacesAnUnresolvableConfigDirectory(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", "")
-	t.Setenv("HOME", "")
+	setUserConfigDirEnv(t, "")
+	if runtime.GOOS != "windows" {
+		// os.UserConfigDir falls back to $HOME/.config on Unix when
+		// XDG_CONFIG_HOME is unset; both must be cleared to force the failure.
+		t.Setenv("HOME", "")
+	}
 	if _, err := DefaultPath(); err == nil {
 		t.Fatal("DefaultPath must report an error when the OS config directory cannot be resolved")
 	}
@@ -87,6 +105,15 @@ func TestLoadRejectsADocumentThatFailsValidation(t *testing.T) {
 func TestLoadSurfacesAWriteFailureWhenCreatingDefaults(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses directory permission checks")
+	}
+	if runtime.GOOS == "windows" {
+		// os.Chmod on Windows only toggles the FILE_ATTRIBUTE_READONLY bit, which
+		// NTFS does not honor for directories: a "read-only" directory still
+		// accepts new files. Denying write access there requires an explicit ACL
+		// change, which golang.org/x/sys/windows can do but the standard library
+		// cannot portably express — this case is untested on Windows for the same
+		// reason singleton_windows.go and tray_windows.go are (CLAUDE.md §1).
+		t.Skip("os.Chmod cannot make a directory unwritable on Windows")
 	}
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o500); err != nil {

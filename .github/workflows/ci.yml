@@ -26,7 +26,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Read-only for every job. Only `publish` widens this, and only to contents.
 permissions:
   contents: read
 
@@ -57,7 +56,6 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
-          # Restores the module and build caches, keyed on go.sum.
           cache: true
 
       # Cheapest check first: it needs no network and catches the most common

@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -150,7 +151,7 @@ func TestWithIntervalRejectsWhatValidateRejects(t *testing.T) {
 	}
 	// The rejected value must not reach the returned document: the caller persists
 	// what it gets back.
-	if changed != base {
+	if !reflect.DeepEqual(changed, base) {
 		t.Errorf("WithInterval returned a modified config alongside an error: %+v", changed)
 	}
 	if got := time.Duration(changed.PollInterval); got != poll.DefaultInterval {
@@ -160,7 +161,7 @@ func TestWithIntervalRejectsWhatValidateRejects(t *testing.T) {
 
 func TestWithIntervalKeepsEveryOtherField(t *testing.T) {
 	base := config.Default()
-	base.CredentialPath = "/pinned/.claude/.credentials.json"
+	base.Providers = map[string]config.ProviderConfig{"anthropic": {CredentialPath: "/pinned/.claude/.credentials.json"}}
 	base.Language = string(i18n.LangPtBR)
 	base.UsageAlerts = quota.Thresholds{WarnAtPercent: 60, CriticalAtPercent: 80}
 
@@ -173,7 +174,7 @@ func TestWithIntervalKeepsEveryOtherField(t *testing.T) {
 	}
 	want := base
 	want.PollInterval = changed.PollInterval
-	if changed != want {
+	if !reflect.DeepEqual(changed, want) {
 		t.Errorf("WithInterval changed more than the cadence: %+v", changed)
 	}
 }
@@ -193,7 +194,7 @@ func TestWithLanguageAcceptsEverySupportedTag(t *testing.T) {
 		}
 		want := base
 		want.Language = changed.Language
-		if changed != want {
+		if !reflect.DeepEqual(changed, want) {
 			t.Errorf("WithLanguage changed more than the language: %+v", changed)
 		}
 	}
@@ -205,7 +206,7 @@ func TestWithLanguageRejectsAnUnsupportedTag(t *testing.T) {
 	if err == nil {
 		t.Fatalf("WithLanguage accepted de-DE as %+v", changed)
 	}
-	if changed != base {
+	if !reflect.DeepEqual(changed, base) {
 		t.Errorf("WithLanguage returned a modified config alongside an error: %+v", changed)
 	}
 }
@@ -216,7 +217,7 @@ func TestConfigRoundTripsThroughThePresenter(t *testing.T) {
 	cfg := config.Default()
 	cfg.Language = string(i18n.LangPtBR)
 	cfg.UsageAlerts.WarnAtPercent = 55
-	if got := NewPresenter(cfg).Config(); got != cfg {
+	if got := NewPresenter(cfg).Config(); !reflect.DeepEqual(got, cfg) {
 		t.Errorf("Config() = %+v, want %+v", got, cfg)
 	}
 }

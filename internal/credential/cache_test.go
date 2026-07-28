@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -14,33 +13,32 @@ import (
 // documentExpiringAt renders a credential document whose access token expires
 // at the given instant.
 func documentExpiringAt(t time.Time, token string) []byte {
-	return []byte(`{"claudeAiOauth":{"accessToken":"` + token + `","expiresAt":` +
-		strconv.FormatInt(t.UnixMilli(), 10) + `,"subscriptionType":"pro"}}`)
+	return testDocument(token, t.UnixMilli())
 }
 
 // newCacheOnFile returns a Cache pinned to a temp credential file plus a
 // pointer to the clock it reads, so tests can move time without sleeping.
 func newCacheOnFile(t *testing.T, contents []byte) (*Cache, string, *time.Time) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), credentialFileName)
+	path := filepath.Join(t.TempDir(), testRel.File)
 	if err := os.WriteFile(path, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	clock := time.Date(2026, 7, 25, 18, 0, 0, 0, time.UTC)
-	c := NewCache(path, DefaultSkewMargin)
+	c := NewCache(path, testRel, decodeTestDocument, DefaultSkewMargin)
 	c.now = func() time.Time { return clock }
 	return c, path, &clock
 }
 
 func TestNewCacheDefaultsAnInvalidSkewMargin(t *testing.T) {
 	for _, given := range []time.Duration{0, -time.Minute} {
-		c := NewCache("", given)
+		c := NewCache("", testRel, decodeTestDocument, given)
 		if c.skewMargin != DefaultSkewMargin {
 			t.Errorf("NewCache(skew=%v).skewMargin = %v, want the default %v", given, c.skewMargin, DefaultSkewMargin)
 		}
 	}
 	const explicit = 10 * time.Minute
-	if c := NewCache("", explicit); c.skewMargin != explicit {
+	if c := NewCache("", testRel, decodeTestDocument, explicit); c.skewMargin != explicit {
 		t.Errorf("an explicit positive skew margin must be honoured, got %v", c.skewMargin)
 	}
 }

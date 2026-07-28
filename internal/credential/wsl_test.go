@@ -32,13 +32,13 @@ func TestWSLCredentialPathsCoverEveryLoginHome(t *testing.T) {
 		`\\wsl.localhost\Ubuntu\home`: {"felipe", "deploy"},
 	}}
 
-	paths := wslCredentialPaths(`\\wsl.localhost\Ubuntu`, listing.list)
+	paths := wslCredentialPaths(`\\wsl.localhost\Ubuntu`, testRel, listing.list)
 	want := []string{
 		// Sorted, because a directory listing carries no order of its own.
-		`\\wsl.localhost\Ubuntu\home\deploy\.claude\.credentials.json`,
-		`\\wsl.localhost\Ubuntu\home\felipe\.claude\.credentials.json`,
+		`\\wsl.localhost\Ubuntu\home\deploy\.testvendor\creds.json`,
+		`\\wsl.localhost\Ubuntu\home\felipe\.testvendor\creds.json`,
 		// root is last: the CLI is normally run as an ordinary user.
-		`\\wsl.localhost\Ubuntu\root\.claude\.credentials.json`,
+		`\\wsl.localhost\Ubuntu\root\.testvendor\creds.json`,
 	}
 	assertPaths(t, paths, want)
 
@@ -58,8 +58,8 @@ func TestWSLCredentialPathsSurviveAnUnreadableHomeParent(t *testing.T) {
 		"empty /home":   {entries: map[string][]string{`\\wsl.localhost\Alpine\home`: {}}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			paths := wslCredentialPaths(`\\wsl.localhost\Alpine`, listing.list)
-			assertPaths(t, paths, []string{`\\wsl.localhost\Alpine\root\.claude\.credentials.json`})
+			paths := wslCredentialPaths(`\\wsl.localhost\Alpine`, testRel, listing.list)
+			assertPaths(t, paths, []string{`\\wsl.localhost\Alpine\root\.testvendor\creds.json`})
 		})
 	}
 }
@@ -74,10 +74,10 @@ func TestWSLCredentialPathsRejectNamesThatAreNotOneComponent(t *testing.T) {
 		},
 	}}
 
-	paths := wslCredentialPaths(`\\wsl.localhost\Ubuntu`, listing.list)
+	paths := wslCredentialPaths(`\\wsl.localhost\Ubuntu`, testRel, listing.list)
 	assertPaths(t, paths, []string{
-		`\\wsl.localhost\Ubuntu\home\ok\.claude\.credentials.json`,
-		`\\wsl.localhost\Ubuntu\root\.claude\.credentials.json`,
+		`\\wsl.localhost\Ubuntu\home\ok\.testvendor\creds.json`,
+		`\\wsl.localhost\Ubuntu\root\.testvendor\creds.json`,
 	})
 	for _, path := range paths {
 		if strings.Contains(path, "..") {
@@ -95,7 +95,7 @@ func TestWSLCredentialPathsAreBounded(t *testing.T) {
 	}
 	listing := &fakeListing{entries: map[string][]string{`\\wsl.localhost\Big\home`: many}}
 
-	paths := wslCredentialPaths(`\\wsl.localhost\Big`, listing.list)
+	paths := wslCredentialPaths(`\\wsl.localhost\Big`, testRel, listing.list)
 	if len(paths) != maxWSLHomeDirs+1 {
 		t.Fatalf("produced %d paths, want %d homes plus root", len(paths), maxWSLHomeDirs)
 	}
@@ -110,7 +110,7 @@ func TestWSLCredentialPathsAreBounded(t *testing.T) {
 // filesystem is that no process is created to learn a directory name.
 func TestWSLCredentialPathsNeverNameAShell(t *testing.T) {
 	listing := &fakeListing{entries: map[string][]string{`\\wsl.localhost\Ubuntu\home`: {"felipe"}}}
-	for _, path := range wslCredentialPaths(`\\wsl.localhost\Ubuntu`, listing.list) {
+	for _, path := range wslCredentialPaths(`\\wsl.localhost\Ubuntu`, testRel, listing.list) {
 		for _, forbidden := range []string{"sh", "bash", "cmd", "powershell", "-c"} {
 			if strings.Contains(path, " "+forbidden) {
 				t.Errorf("path %q carries a command fragment", path)

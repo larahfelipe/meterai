@@ -50,13 +50,24 @@ func (d *Duration) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
-// Config is the complete settings document.
-type Config struct {
-	// CredentialPath pins the Claude CLI credential file. Empty means
+// ProviderConfig is one vendor's settings. It holds only what every provider
+// needs regardless of shape; anything vendor-specific stays out of this
+// package entirely.
+type ProviderConfig struct {
+	// CredentialPath pins that vendor's CLI credential file. Empty means
 	// autodiscovery. When set, it is authoritative: discovery will not fall
 	// back to another location, so the app cannot silently monitor a different
 	// account than the one pinned here.
 	CredentialPath string `json:"credentialPath"`
+}
+
+// Config is the complete settings document.
+type Config struct {
+	// Providers is keyed by the vendor key each provider's quota.MeterID
+	// already uses as a prefix ("anthropic", "openai"). Adding a provider is
+	// wiring a new key here and in cmd/meterai/main.go — never a change to
+	// this struct.
+	Providers map[string]ProviderConfig `json:"providers"`
 	// PollInterval is the steady-state cadence. Values below the safe minimum
 	// are rejected rather than silently corrected, so a user who sets 10s finds
 	// out why it will not happen.
@@ -76,20 +87,29 @@ type Config struct {
 // Default returns the settings used when no file exists yet.
 func Default() Config {
 	return Config{
+		Providers:    map[string]ProviderConfig{},
 		PollInterval: Duration(poll.DefaultInterval),
 		UsageAlerts:  quota.DefaultThresholds(),
 		Language:     string(i18n.DefaultLang),
 	}
 }
 
+// anthropicProviderKey is the vendor key predating this struct's Providers
+// map, used only to migrate the flat credentialPath a pre-multi-provider
+// document carried. internal/provider/anthropic.VendorKey has the same value;
+// it is not imported from there to keep this package free of a provider
+// dependency for one literal.
+const anthropicProviderKey = "anthropic"
+
 // UnmarshalJSON fills the document, preserving whatever the receiver already
 // holds for keys the file omits — which is what lets Load seed it with the
 // defaults and have a partial document validate.
 //
-// It also accepts the flat shape written before usageAlerts existed. Ignoring
-// those keys would silently revert a hand-tuned pair to the defaults on
-// upgrade, which is exactly the kind of change to a user's settings this app
-// must not make without saying so.
+// It also accepts two shapes written before this release: the flat
+// usageAlerts pair, and the single top-level credentialPath from before
+// Providers existed. Ignoring either would silently revert a hand-tuned
+// setting to the defaults on upgrade, which is exactly the kind of change to
+// a user's settings this app must not make without saying so.
 func (c *Config) UnmarshalJSON(raw []byte) error {
 	// document has Config's fields but not its method set, so unmarshalling
 	// into it cannot recurse back into here.
@@ -104,12 +124,22 @@ func (c *Config) UnmarshalJSON(raw []byte) error {
 		UsageAlerts       *json.RawMessage `json:"usageAlerts"`
 		WarnAtPercent     *float64         `json:"warnAtPercent"`
 		CriticalAtPercent *float64         `json:"criticalAtPercent"`
+		Providers         *json.RawMessage `json:"providers"`
+		CredentialPath    *string          `json:"credentialPath"`
 	}
 	if err := json.Unmarshal(raw, &legacy); err != nil {
 		return err
 	}
+
 	// The current shape wins outright when present, so a document carrying both
 	// resolves to the one this release writes rather than to a merge of the two.
+	if legacy.Providers == nil && legacy.CredentialPath != nil {
+		if c.Providers == nil {
+			c.Providers = map[string]ProviderConfig{}
+		}
+		c.Providers[anthropicProviderKey] = ProviderConfig{CredentialPath: *legacy.CredentialPath}
+	}
+
 	if legacy.UsageAlerts != nil {
 		return nil
 	}

@@ -299,7 +299,7 @@ func TestStatusTextNamesTheUserAction(t *testing.T) {
 	}
 	for kind, want := range cases {
 		sub := live()
-		sub.State.LastError = &quota.FetchError{Kind: kind, Err: errors.New("x")}
+		sub.State.LastError = &quota.FetchError{Kind: kind, RenewHint: "claude", Err: errors.New("x")}
 		got := presenter.StatusText(sub, now)
 		if !strings.Contains(got, want) {
 			t.Errorf("status for %v = %q, does not mention %q", kind, got, want)

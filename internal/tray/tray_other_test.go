@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -197,6 +198,40 @@ func TestRunReportsAnUnreadableDocumentWithoutStopping(t *testing.T) {
 		t.Errorf("output lost the preferences row: %q", out.String())
 	}
 	// Quota figures must survive an account that cannot be read.
+	if !strings.Contains(out.String(), "Session (5h)") {
+		t.Errorf("output lost the meter rows: %q", out.String())
+	}
+}
+
+// "This document declares nothing" is the steady state for a CLI installed but
+// never signed in, and the permanent one for a vendor that keeps no such
+// document at all. renderNow runs on every update, so reporting those would put
+// the same two lines on stderr every poll for the life of the process — which is
+// how the failures that are real get buried.
+func TestRunStaysSilentAboutADocumentThatSimplyDeclaresNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var out bytes.Buffer
+	err := run(ctx, &out, Wiring{
+		Config:  config.Default(),
+		Updates: make(chan struct{}),
+		Providers: oneProvider(stubCLI{
+			accountErr: fmt.Errorf("CLI state document %q: %w", "/somewhere", identity.ErrNoAccount),
+			prefsErr:   fmt.Errorf("CLI settings document %q: %w", "/somewhere", identity.ErrNoPreferences),
+		}),
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run() = %v, want context.Canceled", err)
+	}
+	for _, unwanted := range []string{"account details unavailable", "CLI preferences unavailable"} {
+		if strings.Contains(out.String(), unwanted) {
+			t.Errorf("an expected absence was reported as a failure: %q", out.String())
+		}
+	}
+	// The poll itself is still reported: only the two lines about documents that
+	// were never going to say anything are suppressed.
 	if !strings.Contains(out.String(), "Session (5h)") {
 		t.Errorf("output lost the meter rows: %q", out.String())
 	}

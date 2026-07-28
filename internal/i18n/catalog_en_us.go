@@ -44,7 +44,7 @@ var enUS = &Catalog{
 		// text has 63 characters to work with and the cadence is one setting away.
 		StatusUpdatedBrief: "Updated %s ago",
 		StatusStale:        "(data from %s ago)",
-		ErrorUnauthorized:  "Credential expired — run `claude` once to renew it",
+		ErrorUnauthorized:  "Credential expired — run `%s` once to renew it",
 		ErrorRateLimited:   "Request limit reached — waiting",
 		ErrorTransient:     "No response from the API — retrying",
 		ErrorProtocol:      "The API changed shape — the app needs an update",
@@ -54,11 +54,16 @@ var enUS = &Catalog{
 	// The keys are the MeterIDs the providers mint and persist; they are matched
 	// literally here so this package never imports a provider.
 	meterLabels: map[quota.MeterID]string{
-		"anthropic:session":       "Session (5h)",
-		"anthropic:weekly_all":    "Weekly (7d)",
-		"anthropic:weekly_opus":   "Weekly Opus (7d)",
-		"anthropic:weekly_sonnet": "Weekly Sonnet (7d)",
-		"anthropic:weekly_cowork": "Weekly Cowork (7d)",
-		"anthropic:spend":         "Credits",
+		"anthropic:session":          "Session (5h)",
+		"anthropic:weekly_all":       "Weekly (7d)",
+		"anthropic:weekly_opus":      "Weekly Opus (7d)",
+		"anthropic:weekly_sonnet":    "Weekly Sonnet (7d)",
+		"anthropic:weekly_cowork":    "Weekly Cowork (7d)",
+		"anthropic:spend":            "Credits",
+		"openai:session":             "Session (5h)",
+		"openai:weekly":              "Weekly (7d)",
+		"openai:code_review_session": "Code Review (5h)",
+		"openai:code_review_weekly":  "Code Review Weekly (7d)",
+		"openai:credits":             "Credits",
 	},
 }

@@ -225,7 +225,11 @@ type FetchError struct {
 	Status int
 	// RetryAfter is non-zero only when the vendor supplied one.
 	RetryAfter time.Duration
-	Err        error
+	// RenewHint names the vendor's own CLI command that clears an Unauthorized
+	// failure ("claude", "codex login"). Set only alongside Kind: Unauthorized,
+	// so the message the UI builds from it never names another vendor's CLI.
+	RenewHint string
+	Err       error
 }
 
 func (e *FetchError) Error() string {

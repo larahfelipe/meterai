@@ -67,7 +67,7 @@ func (b *boundedBuffer) Bytes() []byte { return b.buf.Bytes() }
 // listDir reports the entry names of a directory; a failure means "nothing to
 // probe here" and is not distinguished from an empty directory, because a
 // stopped distribution and an account-less one are handled identically.
-func wslCredentialPaths(distroRoot string, listDir func(string) ([]string, error)) []string {
+func wslCredentialPaths(distroRoot string, rel RelPath, listDir func(string) ([]string, error)) []string {
 	paths := make([]string, 0, maxWSLHomeDirs+1)
 
 	// The login account first: the CLI is normally run as an ordinary user, and
@@ -83,14 +83,14 @@ func wslCredentialPaths(distroRoot string, listDir func(string) ([]string, error
 			if !isPlainName(home) {
 				continue
 			}
-			paths = append(paths, credentialPathIn(distroRoot+wslHomeParent+`\`+home))
+			paths = append(paths, credentialPathIn(distroRoot+wslHomeParent+`\`+home, rel))
 		}
 	}
-	return append(paths, credentialPathIn(distroRoot+wslRootHome))
+	return append(paths, credentialPathIn(distroRoot+wslRootHome, rel))
 }
 
-func credentialPathIn(home string) string {
-	return home + `\` + claudeConfigDirName + `\` + credentialFileName
+func credentialPathIn(home string, rel RelPath) string {
+	return home + `\` + rel.Dir + `\` + rel.File
 }
 
 // isPlainName rejects anything that is not a single path component. Directory

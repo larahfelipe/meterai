@@ -26,9 +26,9 @@ func TestCandidatesAlwaysOfferTheNativeWindowsPath(t *testing.T) {
 
 	// The error is deliberately ignored: on a host with no WSL, enumeration
 	// fails, and the contract is that the native candidate survives it.
-	candidates, _ := Candidates(context.Background(), "")
+	candidates, _ := Candidates(context.Background(), "", testRel)
 
-	want := filepath.Join(profile, claudeConfigDirName, credentialFileName)
+	want := filepath.Join(profile, testRel.Dir, testRel.File)
 	found := false
 	for _, c := range candidates {
 		if c.Origin == OriginNativeWindows && c.Path == want {
@@ -45,7 +45,7 @@ func TestCandidatesSurviveAFailedDistributionEnumeration(t *testing.T) {
 	profile := t.TempDir()
 	t.Setenv("USERPROFILE", profile)
 
-	candidates, err := Candidates(context.Background(), "")
+	candidates, err := Candidates(context.Background(), "", testRel)
 	if err != nil && len(candidates) == 0 {
 		t.Fatalf("enumeration failed with %v and returned nothing to probe", err)
 	}
@@ -53,9 +53,9 @@ func TestCandidatesSurviveAFailedDistributionEnumeration(t *testing.T) {
 
 func TestCandidatesPutTheConfiguredPathFirst(t *testing.T) {
 	t.Setenv("USERPROFILE", t.TempDir())
-	const pinned = `C:\pinned\.claude\.credentials.json`
+	const pinned = `C:\pinned\.testvendor\creds.json`
 
-	candidates, _ := Candidates(context.Background(), pinned)
+	candidates, _ := Candidates(context.Background(), pinned, testRel)
 	if len(candidates) == 0 || candidates[0].Path != pinned {
 		t.Fatalf("candidates = %+v, want %q first", candidates, pinned)
 	}
@@ -99,7 +99,7 @@ func TestWSLExecutableIgnoresPATH(t *testing.T) {
 func TestWSLCandidatesStayInsideTheirDistribution(t *testing.T) {
 	t.Setenv("USERPROFILE", t.TempDir())
 
-	candidates, _ := Candidates(context.Background(), "")
+	candidates, _ := Candidates(context.Background(), "", testRel)
 	for _, c := range candidates {
 		if c.Origin != OriginWSL {
 			continue
@@ -110,7 +110,7 @@ func TestWSLCandidatesStayInsideTheirDistribution(t *testing.T) {
 		if strings.Contains(c.Path, "..") {
 			t.Errorf("candidate %q carries a parent reference", c.Path)
 		}
-		if !strings.HasSuffix(c.Path, `\`+claudeConfigDirName+`\`+credentialFileName) {
+		if !strings.HasSuffix(c.Path, `\`+testRel.Dir+`\`+testRel.File) {
 			t.Errorf("candidate %q does not name the credential file", c.Path)
 		}
 	}

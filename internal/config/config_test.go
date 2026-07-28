@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -22,7 +23,7 @@ func TestLoadCreatesDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg != Default() {
+	if !reflect.DeepEqual(cfg, Default()) {
 		t.Errorf("Load returned %+v, want defaults %+v", cfg, Default())
 	}
 	// The file must be created so the user can discover the settings.
@@ -35,7 +36,7 @@ func TestLoadCreatesDefaultsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if reloaded != cfg {
+	if !reflect.DeepEqual(reloaded, cfg) {
 		t.Errorf("reload = %+v, want %+v", reloaded, cfg)
 	}
 }
@@ -126,7 +127,7 @@ func TestLoadSurfacesAWriteFailureWhenCreatingDefaults(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unwritable config directory must surface as an error, not a silent default")
 	}
-	if cfg != Default() {
+	if !reflect.DeepEqual(cfg, Default()) {
 		t.Errorf("Load must still return usable defaults alongside the write error, got %+v", cfg)
 	}
 }
@@ -402,7 +403,7 @@ func TestSaveAndLoadRoundTripTheUsageAlerts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Load = %+v, want %+v", got, want)
 	}
 }
@@ -482,6 +483,66 @@ func TestLoadValidatesMigratedThresholds(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("an inverted legacy pair must not load")
+	}
+}
+
+func TestLoadMigratesTheLegacyFlatCredentialPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), fileName)
+	if err := os.WriteFile(path, []byte(`{"credentialPath":"/home/felipe/.claude/.credentials.json"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Providers["anthropic"].CredentialPath; got != "/home/felipe/.claude/.credentials.json" {
+		t.Errorf("Providers[anthropic].CredentialPath = %q, want the migrated legacy path", got)
+	}
+}
+
+// Once the current shape is present it is authoritative: a document carrying
+// both must not merge them, the same rule TestLoadMigratesTheFlatThresholdsOfEarlierReleases
+// asserts for usageAlerts.
+func TestLoadDoesNotMergeTheLegacyCredentialPathOverAnExplicitProvidersMap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), fileName)
+	const doc = `{"providers":{"anthropic":{"credentialPath":"/current/path.json"}},
+	              "credentialPath":"/stale/legacy/path.json"}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Providers["anthropic"].CredentialPath; got != "/current/path.json" {
+		t.Errorf("Providers[anthropic].CredentialPath = %q, want the current shape to win", got)
+	}
+}
+
+func TestSaveAndLoadRoundTripMultipleProviders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), fileName)
+	want := Default()
+	want.Providers = map[string]ProviderConfig{
+		"anthropic": {CredentialPath: "/pinned/claude/.credentials.json"},
+		"openai":    {CredentialPath: "/pinned/codex/auth.json"},
+	}
+	if err := Save(path, want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Load = %+v, want %+v", got, want)
+	}
+}
+
+func TestDefaultProvidersMapIsEmptyNotNil(t *testing.T) {
+	// An empty object in the written file is discoverable for hand-editing;
+	// a null field is not.
+	if cfg := Default(); cfg.Providers == nil {
+		t.Error("Default().Providers must be an empty map, not nil")
 	}
 }
 

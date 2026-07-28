@@ -572,7 +572,7 @@ func (p *Presenter) humanizeError(err error) string {
 	}
 	switch fe.Kind {
 	case quota.Unauthorized:
-		return p.catalog.Text(i18n.ErrorUnauthorized)
+		return p.catalog.Text(i18n.ErrorUnauthorized, fe.RenewHint)
 	case quota.RateLimited:
 		return p.catalog.Text(i18n.ErrorRateLimited)
 	case quota.Transient:

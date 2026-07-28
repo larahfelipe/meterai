@@ -26,7 +26,8 @@ type Origin uint8
 const (
 	// OriginConfigured: explicit path from the user's config file.
 	OriginConfigured Origin = iota + 1
-	// OriginNativeWindows: %USERPROFILE%\.claude on the Windows filesystem.
+	// OriginNativeWindows: the vendor's RelPath under %USERPROFILE%, on the
+	// Windows filesystem.
 	OriginNativeWindows
 	// OriginWSL: reached over the \\wsl.localhost 9P transport.
 	OriginWSL
@@ -41,10 +42,6 @@ type Candidate struct {
 }
 
 const (
-	// credentialFileName is fixed by the Claude CLI.
-	credentialFileName = ".credentials.json"
-	// claudeConfigDirName is the CLI's per-user state directory.
-	claudeConfigDirName = ".claude"
 	// wslUNCRoot is the modern WSL2 network path. Preferred over the legacy
 	// \\wsl$ prefix, which remains only as a compatibility alias.
 	wslUNCRoot = `\\wsl.localhost`
@@ -64,8 +61,8 @@ const (
 // distribution to run a shell in it, and now reads the filesystem instead.
 const wslEnumTimeout = 10 * time.Second
 
-// systemDistros are shipped by other products and never contain a user's
-// Claude CLI state. Probing them would boot a VM for nothing.
+// systemDistros are shipped by other products and never contain a user's CLI
+// state. Probing them would boot a VM for nothing.
 var systemDistros = map[string]struct{}{
 	"docker-desktop":       {},
 	"docker-desktop-data":  {},
@@ -82,14 +79,14 @@ var systemDistros = map[string]struct{}{
 // the same \\wsl.localhost transport the credential is read through, which is
 // why an unusual home location is out of reach and the credentialPath setting is
 // the answer for it.
-func Candidates(ctx context.Context, configuredPath string) ([]Candidate, error) {
+func Candidates(ctx context.Context, configuredPath string, rel RelPath) ([]Candidate, error) {
 	var out []Candidate
 	if configuredPath != "" {
 		out = append(out, Candidate{Path: configuredPath, Origin: OriginConfigured})
 	}
 	if profile := os.Getenv("USERPROFILE"); profile != "" {
 		out = append(out, Candidate{
-			Path:   filepath.Join(profile, claudeConfigDirName, credentialFileName),
+			Path:   filepath.Join(profile, rel.Dir, rel.File),
 			Origin: OriginNativeWindows,
 		})
 	}
@@ -98,7 +95,7 @@ func Candidates(ctx context.Context, configuredPath string) ([]Candidate, error)
 		return out, err
 	}
 	for _, d := range distros {
-		for _, path := range wslCredentialPaths(wslUNCRoot+`\`+d, readDirNames) {
+		for _, path := range wslCredentialPaths(wslUNCRoot+`\`+d, rel, readDirNames) {
 			out = append(out, Candidate{Path: path, Origin: OriginWSL, Distro: d})
 		}
 	}
@@ -143,16 +140,16 @@ func readDirNames(dir string) ([]string, error) {
 // and unreadable candidates are skipped; a malformed or incomplete file is
 // returned immediately, because silently falling through would mask a CLI
 // schema change behind a stale secondary source.
-func Discover(ctx context.Context, configuredPath string) (*Credentials, error) {
+func Discover(ctx context.Context, configuredPath string, rel RelPath, decode Decoder) (*Credentials, error) {
 	// An explicitly configured path is authoritative. Falling back to another
 	// candidate would silently monitor a different account than the one the
 	// user pinned, with no visible difference in the UI.
 	if configuredPath != "" {
-		return Load(configuredPath)
+		return Load(configuredPath, decode)
 	}
-	candidates, enumErr := Candidates(ctx, configuredPath)
+	candidates, enumErr := Candidates(ctx, configuredPath, rel)
 	for _, c := range candidates {
-		creds, err := Load(c.Path)
+		creds, err := Load(c.Path, decode)
 		if err == nil {
 			return creds, nil
 		}
@@ -163,7 +160,7 @@ func Discover(ctx context.Context, configuredPath string) (*Credentials, error) 
 	if enumErr != nil {
 		return nil, enumErr
 	}
-	return nil, &Failure{Kind: Absent, Path: "", Err: errors.New("no candidate path holds Claude CLI credentials; configure the path manually")}
+	return nil, &Failure{Kind: Absent, Path: "", Err: errors.New("no candidate path holds CLI credentials; configure the path manually")}
 }
 
 func listDistros(ctx context.Context) ([]string, error) {

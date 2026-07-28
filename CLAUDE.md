@@ -16,7 +16,7 @@ makes either document wrong, fix it in the same commit.
 
 ```sh
 go test -short -race ./...     # offline, deterministic — the default loop
-go test -race ./...            # also hits the live Anthropic endpoint (1 request/run)
+go test -race ./...            # also hits each vendor's live endpoint the host has credentials for
 go vet ./...
 GOOS=windows go vet ./...      # REQUIRED before calling any change done
 gofmt -l .                     # must print nothing
@@ -61,7 +61,7 @@ It differs from the local loop in four ways, each deliberate:
 - `govulncheck` runs against the host target and against `GOOS=windows`, for the same reason `go vet`
   runs twice: the `_windows.go` files are invisible to a host-target analysis. It is pinned to a
   version, never `@latest`, so the gate cannot change meaning between two runs of one commit.
-- The live test never runs: `-short` everywhere, because CI holds no credential and never will.
+- The live tests never run: `-short` everywhere, because CI holds no vendor credential and never will.
 
 Only `publish` waits on all of it. The build itself is gated on nothing, because it consumes no
 output of the validators and parking it behind the slowest runner only delayed the release; a pull
@@ -101,11 +101,18 @@ just-deleted tag ref is still propagating.
 ### 2.1 Layering
 
 ```
-credential.Cache ─┬→ provider/anthropic → poll.Poller ─┬→ tray → i18n
-                  └→ identity.Cache ───────────────────┘
+credential.Cache ─┬→ provider/usageapi ─┬→ poll.Poller ─┬→ tray → i18n
+                  │    ↑ Endpoint from  │               │
+                  │    provider/anthropic, provider/openai
+                  └→ identity.Cache ────────────────────┘
                           ↘ internal/quota ↙
 
-one tray.ProviderWiring per vendor: {Controller, CLIReader}
+one tray.ProviderWiring per vendor: {Controller, CLIReader}. A vendor package
+is a description, not a client: it supplies a usageapi.Endpoint, a decoder for
+that vendor's response, and its own credential.RelPath + credential.Decoder
+paired behind NewCredentialCache. Both the HTTP conversation (usageapi) and the
+discovery/WSL enumeration (credential) stay one implementation shared by every
+vendor.
 ```
 
 Dependencies flow one way and converge on `internal/quota`, which imports no project package —
@@ -117,8 +124,9 @@ pieces connect; nothing below it learns a file path, a vendor or a platform it d
 | Package | Owns | Must not know about |
 |---|---|---|
 | `internal/quota` | the vendor-neutral model, the fetch-error taxonomy, the local escalation thresholds, the `Provider` interface | anything in this project |
-| `internal/credential` | locating, parsing and caching the CLI credential file; WSL enumeration | vendors, HTTP, the UI |
-| `internal/provider/<vendor>` | one vendor's endpoint and response shape | WSL, paths, the config file, the UI |
+| `internal/credential` | locating and caching a CLI credential file by a vendor-supplied `RelPath`; WSL enumeration; the `Decoder` contract | vendors, HTTP, the UI, any one vendor's on-disk schema, any one vendor's CLI name |
+| `internal/provider/usageapi` | the one HTTP conversation every usage endpoint is: bearer token, expiry guard, status→`FetchErrorKind` taxonomy, bounded read, drain | any vendor; which URL, which headers, which document |
+| `internal/provider/<vendor>` | one vendor's `usageapi.Endpoint`, its response shape, its `RelPath` and `credential.Decoder` | WSL, the config file, the UI, HTTP mechanics |
 | `internal/poll` | cadence, backoff, published state | vendors, the UI |
 | `internal/identity` | the two CLI-owned documents (account, preferences) | vendors, the UI |
 | `internal/config` | the settings document and its validation | the UI, providers |
@@ -158,7 +166,7 @@ paragraph. README states this to users; widening any item makes that section wro
   ever create**. Nothing is executed inside a distribution; home directories are listed over UNC.
 - Any name enumerated from another operating system passes `isPlainName` before it becomes part of a
   path, so a distribution or directory named `..\..\something` cannot reach outside the tree.
-- One network destination, and it is the vendor's own API.
+- One network destination per configured provider, and each is that vendor's own API.
 - Two files written: the config document, and the icon files systray puts in `%TEMP%`. No registry
   write, no startup entry, no service, no scheduled task, no shortcut.
 - No dynamic code loading of its own, and no elevation: it carries no manifest requesting one, so
@@ -166,16 +174,28 @@ paragraph. README states this to users; widening any item makes that section wro
 
 ### 3.2 Never write to the credential file
 
-No OAuth flow, no refresh, no rewrite. Anthropic's `refresh_token` rotates on use, so refreshing
-here would invalidate the copy the CLI holds and log the user out of their CLI. Expiry degrades
-instead: `quota.Unauthorized` → `poll.DegradedInterval` → a message telling the user to run `claude`
-once.
+No OAuth flow, no refresh, no rewrite — for any vendor. Anthropic's `refresh_token` rotates on use,
+so refreshing here would invalidate the copy the CLI holds and log the user out of their CLI; OpenAI's
+`auth.json` carries the same shape of risk in its own `tokens.refresh_token`. Expiry degrades instead:
+`quota.Unauthorized` → `poll.DegradedInterval` → `quota.FetchError.RenewHint` naming that vendor's own
+CLI command (`claude`, `codex login`) in the message the UI shows.
 
-`credential.Secret` redacts through `String`, `GoString` and `MarshalJSON`, enforced by a test;
-`Reveal()` in the outbound `Authorization` header is its only legitimate call site. The credential
-document decodes only the three fields the app uses — naming `refreshToken` in that struct would
-materialize a long-lived secret in this process for no purpose. Never put a secret on a command
-line, never retain one past its use.
+`credential.Secret` redacts through `String`, `GoString` and `MarshalJSON`, enforced by a test. There
+is exactly **one** `Reveal()` call in the whole tree — the `Authorization` header in
+`usageapi.Client.Fetch` — and collapsing the vendors onto that one client is what keeps it at one:
+a second copy of the request-building code is a second place a token can be put somewhere it does
+not belong. A vendor's `Endpoint.Headers` hook runs *before* the fixed headers precisely so it
+cannot displace that one, and `usageapi.Decoder` is handed the plan label rather than the
+credentials, so no response parser ever holds a token. Each vendor's `credential.Decoder`
+(`anthropic.DecodeCredentials`, `openai.DecodeCredentials`) decodes only the fields that vendor's
+provider actually uses — naming a refresh or ID token in that struct would materialize a long-lived
+secret in this process for no purpose. Never put a secret on a command line, never retain one past
+its use.
+
+`internal/credential` names no vendor's CLI, not even in an error string: it serves every vendor,
+and the command that renews a given credential travels to the user through
+`quota.FetchError.RenewHint`, which the provider sets. An expiry message naming `claude` would tell
+an OpenAI user to run the wrong program.
 
 ### 3.3 `FetchError.Kind` drives both the cadence and the message
 
@@ -215,8 +235,10 @@ Adding a setting is adding a `With*`, a row, and its widgets to `newMenuView`, `
 
 ### 3.6 Persisted keys versus display text
 
-`quota.MeterID` (`<vendor>:<kind>`) and `anthropic.VendorKey` are keys: stable across releases even
-if the vendor renames its own field, and the identifier `internal/i18n` looks a label up under.
+`quota.MeterID` (`<vendor>:<kind>`) and each vendor's `VendorKey` are keys: stable across releases
+even if the vendor renames its own field, the identifier `internal/i18n` looks a label up under, and
+the key `config.Config.Providers` is indexed by — `main.go` uses the constant rather than a literal
+so the three cannot drift apart.
 `Snapshot.Product` is the opposite — display text the provider owns ("Claude"), free to change,
 never a key. Product branding belongs in the provider package, not in `internal/i18n`, because it is
 vendor knowledge and is identical in every language.
@@ -354,9 +376,10 @@ the same rule so the icon and the menu can never disagree.
   documents change, and that redraw is what asks for them again. Announcing every read — which
   comparing errors by identity would do, since each failed read mints a new value — would make the
   UI schedule the read that notified it, forever.
-- **Time is injected, never called:** `Poller.now`/`Poller.after`, `Cache.now`,
-  `anthropic.Provider.now`, and explicit `now` parameters throughout `internal/tray`. Keep new code
-  in this shape or its tests become clock-dependent.
+- **Time is injected, never called:** `Poller.now`/`Poller.after`, `Cache.now`, `usageapi.Client.now`
+  — which is also what reaches each vendor's decoder as `observedAt`, so no decoder calls the clock
+  either — and explicit `now` parameters throughout `internal/tray`. Keep new code in this shape or
+  its tests become clock-dependent.
 
 ### 3.13 The tooltip has 63 characters, and no line may lose its figure
 
@@ -422,34 +445,58 @@ catalogue entry, and the two are joined into one row rather than given a label c
 
 ## 5. Adding a provider
 
-Implement `quota.Provider` under `internal/provider/<name>/`. The core does not change, and neither
-does the menu: `main.go` appends a `tray.ProviderWiring` — that vendor's poller and its `CLIReader` —
-to `Wiring.Providers`, and the provider list allocates one entry per element (§3.8). Nothing in
-`internal/tray` counts providers or assumes there is one.
+**A vendor package is a description, not a client.** `quota.Provider` is implemented once, by
+`usageapi.Client`; `internal/provider/<name>/` supplies the three things that are actually this
+vendor's, and writes no HTTP of its own:
 
 ```go
-type Provider interface {
-    Vendor() string
-    Fetch(ctx context.Context) (*quota.Snapshot, error)
-}
+func Endpoint() usageapi.Endpoint          // URL, RenewHint, optional Headers hook, Decode
+func New(usageapi.CredentialSource, *http.Client) *usageapi.Client
+func NewCredentialCache(configuredPath string) *credential.Cache
 ```
+
+That split is not tidiness. Everything on the shared side drives either the retry cadence or what the
+user is told to do — misclassifying a status is a wrong cadence *and* a wrong instruction (§3.3) —
+and the rest of it (the expiry guard, the read bound, the body drain) is the kind of thing a copy
+gets subtly wrong the third time. Written once, it is asserted once, in
+`internal/provider/usageapi`; a vendor package's own tests assert its `Endpoint` and its decoder,
+because those are what no shared test can see.
+
+The core does not change, and neither does the menu: `main.go` appends a `tray.ProviderWiring` — that
+vendor's poller and its `CLIReader` — to `Wiring.Providers`, and the provider list allocates one
+entry per element (§3.8). Nothing in `internal/tray` counts providers or assumes there is one.
 
 The contract:
 
-- Every returned failure is a `*quota.FetchError` with the correct kind (§3.3). An unrecognizable
-  document is `Protocol` — never a panic, never a zero value passing as valid.
 - No field of the remote response is mandatory. These endpoints are undocumented and change without
-  notice.
+  notice. An unrecognizable document is an error from `Decode`, which `usageapi` turns into
+  `Protocol` — never a panic, never a zero value passing as valid.
+- **Bound anything the response can grow.** The read itself is bounded by `usageapi`, but a decoder
+  is still handed vendor-controlled numbers: `openai.maxRelativeReset` exists because a relative
+  reset large enough to overflow `time.Duration` comes back negative and renders as a countdown that
+  has already elapsed, and `parseDollarString` validates its own digits because `strconv` accepts
+  signs the wire format does not.
 - `MeterID` uses the vendor prefix and stable values (§3.6). A meter's `Label()` is the vendor's own
   kind string, not display text: `internal/i18n` translates by `MeterID` and falls back to that raw
   kind, which is what lets a window a vendor adds tomorrow appear without a code change.
-- `Snapshot.Product` is what the vendor sells; `Vendor()` is the key.
-- Meter order within the snapshot is significant (§3.7).
-- Credentials arrive through a local `CredentialSource` interface, so the package knows nothing
-  about WSL, paths or caching.
-- Implementations are safe for concurrent use and must not block past the context deadline.
+- `Snapshot.Product` is what the vendor sells; `Endpoint.Vendor` is the key, and it is the same
+  string `cfg.Providers` is keyed by.
+- Meter order within the snapshot is significant (§3.7): build it positionally, never from anything
+  with its own iteration order.
+- A `Decoder` receives the bytes, the plan label off the credential file, and the injected clock —
+  never the credentials. A parser for an undocumented remote document has no business holding a
+  bearer token.
+- The package supplies its own `credential.RelPath` (the CLI's config directory and file name) and a
+  `credential.Decoder` (that CLI's on-disk schema, decoding only the fields the provider uses — never
+  a refresh or ID token, per §3.2). The two are paired behind `NewCredentialCache` rather than passed
+  separately from `main.go`: crossing one vendor's path with another's decoder type-checks, and the
+  result is an app that silently monitors nothing.
+- `Endpoint.URL` is a constant. It is never built from a response or a config value: that is what
+  keeps the bearer token from reaching a destination the user's settings could redirect it to.
 - Ship a fixture reproducing the real response, including fields whose value is null, so schema
   drift is caught offline.
+- A vendor whose CLI keeps no local account document supplies a `tray.CLIReader` that says so
+  (`openai.NoIdentity`), rather than leaving the field nil.
 
 ---
 
@@ -467,7 +514,7 @@ The contract:
   and wrapped with `%w` otherwise. No sentinel string matching, no swallowing, no log-and-continue.
 - Resources are released with `defer` at the point of acquisition. No leaked descriptors, goroutines
   or timers.
-- Live tests are gated on `testing.Short()` (`live_e2e_test.go`, `smoke_test.go`).
+- Live tests are gated on `testing.Short()` (`live_e2e_test.go`, `live_discovery_test.go`).
 - `go.mod` states the real dependency graph; run `go mod tidy` when imports change.
 
 ---

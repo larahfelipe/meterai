@@ -1,9 +1,11 @@
-package credential
+package anthropic
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/larahfelipe/meterai/internal/credential"
 )
 
 // TestDiscoverLive exercises real discovery against the host. It asserts only
@@ -12,7 +14,7 @@ func TestDiscoverLive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("live host probe")
 	}
-	c, err := Discover(context.Background(), "")
+	c, err := credential.Discover(context.Background(), "", credentialRelPath, DecodeCredentials)
 	if err != nil {
 		t.Skipf("no credentials on this host: %v", err)
 	}

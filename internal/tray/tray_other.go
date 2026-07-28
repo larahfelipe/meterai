@@ -4,10 +4,13 @@ package tray
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"time"
+
+	"github.com/larahfelipe/meterai/internal/identity"
 )
 
 // Run prints each state change to stderr instead of drawing a tray icon.
@@ -31,11 +34,11 @@ func run(ctx context.Context, w io.Writer, wiring Wiring) error {
 			// Unlike the tray, the development host reports why a document could
 			// not be read: it is the only place those failures are diagnosable.
 			account, err := provider.CLI.Account()
-			if err != nil {
+			if isDiagnosable(err) {
 				fmt.Fprintf(w, "meterAI: account details unavailable: %v\n", err)
 			}
 			prefs, err := provider.CLI.Preferences()
-			if err != nil {
+			if isDiagnosable(err) {
 				fmt.Fprintf(w, "meterAI: CLI preferences unavailable: %v\n", err)
 			}
 			subs = append(subs, Subscription{
@@ -56,6 +59,19 @@ func run(ctx context.Context, w io.Writer, wiring Wiring) error {
 			renderNow()
 		}
 	}
+}
+
+// isDiagnosable reports whether a CLIReader failure is worth a line of output.
+//
+// "This document declares nothing" is not a failure to diagnose: it is the
+// steady state for a CLI installed but never signed in, and the permanent one
+// for a vendor that keeps no such document at all. Since renderNow runs on every
+// update, reporting those would emit the same two lines every poll for the life
+// of the process — which buries the failures that are real.
+func isDiagnosable(err error) bool {
+	return err != nil &&
+		!errors.Is(err, identity.ErrNoAccount) &&
+		!errors.Is(err, identity.ErrNoPreferences)
 }
 
 // render takes its destination as a parameter so the headless output can be

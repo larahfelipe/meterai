@@ -3,6 +3,7 @@ package tray
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -299,7 +300,7 @@ func TestARejectedThresholdReturnsTheOriginalDocument(t *testing.T) {
 			if err == nil {
 				t.Fatalf("accepted, producing %+v", changed.UsageAlerts)
 			}
-			if changed != base {
+			if !reflect.DeepEqual(changed, base) {
 				t.Errorf("returned a modified config alongside an error: %+v", changed)
 			}
 			// The user reads this message off the status line, so it has to name
@@ -313,7 +314,7 @@ func TestARejectedThresholdReturnsTheOriginalDocument(t *testing.T) {
 
 func TestAThresholdChangeKeepsEveryOtherSetting(t *testing.T) {
 	base := configWith(t, 75, 90)
-	base.CredentialPath = "/pinned/.claude/.credentials.json"
+	base.Providers = map[string]config.ProviderConfig{"anthropic": {CredentialPath: "/pinned/.claude/.credentials.json"}}
 	base.Language = string(i18n.LangPtBR)
 
 	for name, apply := range map[string]func(config.Config) (config.Config, error){
@@ -327,7 +328,7 @@ func TestAThresholdChangeKeepsEveryOtherSetting(t *testing.T) {
 			}
 			want := base
 			want.UsageAlerts = changed.UsageAlerts
-			if changed != want {
+			if !reflect.DeepEqual(changed, want) {
 				t.Errorf("%s changed more than the thresholds: %+v", name, changed)
 			}
 		})
@@ -507,7 +508,7 @@ func TestAThresholdChosenInTheMenuSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if restarted != loaded {
+	if !reflect.DeepEqual(restarted, loaded) {
 		t.Fatalf("reload = %+v, want the document the menu wrote %+v", restarted, loaded)
 	}
 

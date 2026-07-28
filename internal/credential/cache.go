@@ -27,23 +27,27 @@ type Cache struct {
 	resolvedPath atomic.Pointer[string]
 
 	configuredPath string
+	rel            RelPath
+	decode         Decoder
 	skewMargin     time.Duration
 	// now is injected so expiry behaviour is deterministic under test.
 	now func() time.Time
 }
 
 // DefaultSkewMargin is the headroom applied to token expiry. It absorbs clock
-// drift between this host and Anthropic's edge, and the round-trip time of a
+// drift between this host and the vendor's edge, and the round-trip time of a
 // poll issued just before the boundary.
 const DefaultSkewMargin = 5 * time.Minute
 
-// NewCache builds a Cache. configuredPath may be empty, in which case
-// discovery falls back to the platform's candidate list.
-func NewCache(configuredPath string, skewMargin time.Duration) *Cache {
+// NewCache builds a Cache for one vendor's credential file. configuredPath may
+// be empty, in which case discovery falls back to the platform's candidate
+// list built from rel. decode turns that vendor's on-disk bytes into
+// Credentials.
+func NewCache(configuredPath string, rel RelPath, decode Decoder, skewMargin time.Duration) *Cache {
 	if skewMargin <= 0 {
 		skewMargin = DefaultSkewMargin
 	}
-	return &Cache{configuredPath: configuredPath, skewMargin: skewMargin, now: time.Now}
+	return &Cache{configuredPath: configuredPath, rel: rel, decode: decode, skewMargin: skewMargin, now: time.Now}
 }
 
 // Token returns credentials usable now, re-reading from disk when the cached
@@ -82,8 +86,12 @@ func (c *Cache) Token(ctx context.Context) (*Credentials, error) {
 		// site may use is exposure held for the life of the process: the previous
 		// one is dropped rather than joined by a second dead secret.
 		c.current = nil
+		// The message names no CLI. This package serves every vendor, and the
+		// command that renews a given credential is that vendor's own: it travels
+		// to the user through quota.FetchError.RenewHint, which the provider sets
+		// (§3.2). Naming one here would tell an OpenAI user to run the Claude CLI.
 		return nil, &Failure{Kind: Expired, Path: fresh.Source,
-			Err: errors.New("the credential file on disk holds an expired access token; run the claude CLI once to renew it")}
+			Err: errors.New("the credential file on disk holds an expired access token; renew it with the CLI that wrote it")}
 	}
 	c.current = fresh
 	return fresh, nil
@@ -94,11 +102,11 @@ func (c *Cache) Token(ctx context.Context) (*Credentials, error) {
 // re-installed the CLI elsewhere).
 func (c *Cache) reload(ctx context.Context) (*Credentials, error) {
 	if path := c.Source(); path != "" {
-		if fresh, err := Load(path); err == nil {
+		if fresh, err := Load(path, c.decode); err == nil {
 			return fresh, nil
 		}
 	}
-	return Discover(ctx, c.configuredPath)
+	return Discover(ctx, c.configuredPath, c.rel, c.decode)
 }
 
 // Source reports the path currently in use, or "" before the first successful

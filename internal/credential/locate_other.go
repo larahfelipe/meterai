@@ -20,7 +20,7 @@ type Origin uint8
 const (
 	// OriginConfigured: explicit path from the user's config file.
 	OriginConfigured Origin = iota + 1
-	// OriginNativeHome: $HOME/.claude on the local filesystem.
+	// OriginNativeHome: the vendor's RelPath under $HOME, on the local filesystem.
 	OriginNativeHome
 )
 
@@ -32,18 +32,13 @@ type Candidate struct {
 	Origin Origin
 }
 
-const (
-	credentialFileName  = ".credentials.json"
-	claudeConfigDirName = ".claude"
-)
-
 // isRemoteSource reports whether opening a path can cost more than an open.
 // Nothing on this platform is reached through another operating system: the
 // development host reads its own filesystem, and the price is always the same.
 func isRemoteSource(string) bool { return false }
 
 // Candidates returns probe paths in decreasing order of confidence.
-func Candidates(_ context.Context, configuredPath string) ([]Candidate, error) {
+func Candidates(_ context.Context, configuredPath string, rel RelPath) ([]Candidate, error) {
 	var out []Candidate
 	if configuredPath != "" {
 		out = append(out, Candidate{Path: configuredPath, Origin: OriginConfigured})
@@ -53,22 +48,22 @@ func Candidates(_ context.Context, configuredPath string) ([]Candidate, error) {
 		return out, &Failure{Kind: Absent, Path: "", Err: err}
 	}
 	return append(out, Candidate{
-		Path:   filepath.Join(home, claudeConfigDirName, credentialFileName),
+		Path:   filepath.Join(home, rel.Dir, rel.File),
 		Origin: OriginNativeHome,
 	}), nil
 }
 
 // Discover returns the first candidate that yields valid credentials.
-func Discover(ctx context.Context, configuredPath string) (*Credentials, error) {
+func Discover(ctx context.Context, configuredPath string, rel RelPath, decode Decoder) (*Credentials, error) {
 	// An explicitly configured path is authoritative. Falling back to another
 	// candidate would silently monitor a different account than the one the
 	// user pinned, with no visible difference in the UI.
 	if configuredPath != "" {
-		return Load(configuredPath)
+		return Load(configuredPath, decode)
 	}
-	candidates, enumErr := Candidates(ctx, configuredPath)
+	candidates, enumErr := Candidates(ctx, configuredPath, rel)
 	for _, c := range candidates {
-		creds, err := Load(c.Path)
+		creds, err := Load(c.Path, decode)
 		if err == nil {
 			return creds, nil
 		}
@@ -79,5 +74,5 @@ func Discover(ctx context.Context, configuredPath string) (*Credentials, error) 
 	if enumErr != nil {
 		return nil, enumErr
 	}
-	return nil, &Failure{Kind: Absent, Path: "", Err: errors.New("no candidate path holds Claude CLI credentials")}
+	return nil, &Failure{Kind: Absent, Path: "", Err: errors.New("no candidate path holds CLI credentials")}
 }

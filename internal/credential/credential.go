@@ -1,8 +1,14 @@
-// Package credential locates and parses the OAuth credential file written by
-// the official Claude CLI. It is strictly read-only: this process never
-// refreshes nor rewrites the file, because the Anthropic refresh_token is
-// assumed to rotate on use and a rotation performed here would invalidate the
-// copy the CLI still holds, logging the user out of their CLI.
+// Package credential locates and reads the OAuth credential file an official
+// vendor CLI has already written. It is vendor-neutral: which file, and what
+// its bytes mean, arrive as a RelPath and a Decoder that
+// internal/provider/<vendor> supplies, while the discovery, the bounded read
+// and the caching around them are one implementation shared by every vendor.
+//
+// It is strictly read-only, for every vendor. This process never refreshes nor
+// rewrites the file: these refresh tokens are assumed to rotate on use, so a
+// rotation performed here would invalidate the copy the CLI still holds and log
+// the user out of their own CLI. Expiry degrades instead — the poller slows and
+// the UI names that vendor's own renewal command.
 package credential
 
 import (
@@ -94,6 +100,11 @@ type Credentials struct {
 	ExpiresAt   time.Time
 	// SubscriptionType is the vendor's plan label, shown for context only.
 	SubscriptionType string
+	// AccountID is optional, vendor-specific auth metadata beyond the bearer
+	// token itself — some APIs require it as a sibling header (OpenAI's
+	// ChatGPT-Account-Id). Empty when the vendor's API needs none, as with
+	// Anthropic today.
+	AccountID string
 	// Source is the path these bytes came from, both for diagnostics and for
 	// re-reading directly when the access token nears expiry.
 	Source string
@@ -101,53 +112,33 @@ type Credentials struct {
 
 // IsUsableAt reports whether the access token can still authenticate a request
 // issued at t, leaving skewMargin of headroom for clock skew between this host
-// and Anthropic's edge.
+// and the vendor's edge.
 func (c *Credentials) IsUsableAt(t time.Time, skewMargin time.Duration) bool {
 	return t.Add(skewMargin).Before(c.ExpiresAt)
 }
 
-// document records the on-disk schema, which the CLI publishes nowhere and
-// which was established by inspection. It decodes only the three fields this app
-// uses: the same object also carries refreshToken, refreshTokenExpiresAt,
-// scopes, rateLimitTier and a sibling organizationUuid, and naming them here
-// would materialize them — the refresh token above all — as live strings in this
-// process for no purpose the app has. expiresAt is epoch MILLISECONDS.
-type document struct {
-	ClaudeAiOauth struct {
-		AccessToken      string `json:"accessToken"`
-		ExpiresAtMillis  int64  `json:"expiresAt"`
-		SubscriptionType string `json:"subscriptionType"`
-	} `json:"claudeAiOauth"`
+// RelPath identifies a vendor CLI's credential file by the directory and file
+// name appended to a home directory, native or reached over WSL. Discovery
+// stays vendor-neutral by taking this as a parameter rather than naming a
+// vendor's own layout: internal/provider/<vendor> owns the literal values.
+type RelPath struct {
+	Dir  string
+	File string
 }
+
+// Decoder turns raw credential bytes into Credentials. Each vendor supplies
+// its own: the on-disk schema differs (JSON key names, epoch-millis vs.
+// RFC3339 expiry), while the bounded read, discovery and caching around it do
+// not.
+type Decoder func(raw []byte, path string) (*Credentials, error)
 
 // maxCredentialBytes bounds the read so a corrupted or hostile file cannot
 // exhaust memory. The real file is well under a kilobyte.
 const maxCredentialBytes = 1 << 20
 
-// Parse validates raw credential bytes. path is used only for error context.
-func Parse(raw []byte, path string) (*Credentials, error) {
-	var doc document
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil, &Failure{Kind: Malformed, Path: path, Err: err}
-	}
-	o := doc.ClaudeAiOauth
-	switch {
-	case o.AccessToken == "":
-		return nil, &Failure{Kind: Incomplete, Path: path, Err: errors.New("claudeAiOauth.accessToken is empty")}
-	case o.ExpiresAtMillis <= 0:
-		return nil, &Failure{Kind: Incomplete, Path: path, Err: errors.New("claudeAiOauth.expiresAt is not a positive epoch-millisecond value")}
-	}
-	return &Credentials{
-		AccessToken:      Secret(o.AccessToken),
-		ExpiresAt:        time.UnixMilli(o.ExpiresAtMillis).UTC(),
-		SubscriptionType: o.SubscriptionType,
-		Source:           path,
-	}, nil
-}
-
-// Load reads and parses one candidate path. A missing file yields Absent, so
+// Load reads and decodes one candidate path. A missing file yields Absent, so
 // the caller can advance to the next candidate.
-func Load(path string) (*Credentials, error) {
+func Load(path string, decode Decoder) (*Credentials, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		kind := Unreadable
@@ -166,5 +157,5 @@ func Load(path string) (*Credentials, error) {
 		return nil, &Failure{Kind: Malformed, Path: path,
 			Err: fmt.Errorf("file exceeds %d byte limit", maxCredentialBytes)}
 	}
-	return Parse(raw, path)
+	return decode(raw, path)
 }

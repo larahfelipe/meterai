@@ -303,10 +303,23 @@ adjacent separators, not a crash.
 hover help would have to be owner-drawn, so a row that cannot say what it means in its own caption
 cannot say it at all. The tooltip catalogue keys do not exist for that reason.
 
-The split between the two levels is by how often a value is read, not by which document supplied it:
-quota figures and the configured model are operational state and stay on the first level; the fields
-that identify an account are consulted rarely and are read by everyone watching a shared screen, so
-they live behind the provider's own entry. A test asserts no account field reaches the first level.
+**Every provider's own entry carries its own copy of the operational rows, not only the active
+provider's.** `providerEntry` allocates a `context`, a `prefs` row and `maxMeterRows` meter rows —
+the same three `ProviderRow`/`PreferencesRow`/`MeterRows` produce for the active provider at the first
+level — ahead of its `accountRows`, and `applyProviders` fills all of them from that provider's own
+`Subscription`. This is what keeps a provider that never holds the first level (every provider past
+the first, permanently — `Subscriptions.Active` never changes which one that is) from being monitored
+with nothing to show for it: with two vendors configured, the second one's actual quota figures exist
+nowhere else in the menu. The duplication for the *first* provider — its meters appear both at the
+first level and again behind its own list entry — is accepted rather than special-cased away, because
+suppressing it would make one provider's submenu a different shape from every other's, and the list is
+read as a column of equivalent entries.
+
+The split that remains is by how often a value is read, not by which document supplied it: quota
+figures and the configured model are operational state and are duplicated onto every provider's own
+entry for exactly that reason; the fields that identify an account are consulted rarely and are read
+by everyone watching a shared screen, so they alone stay behind the provider's entry and never reach
+the first level at all. A test asserts no account field reaches the first level.
 
 ### 3.9 Menu row grammar, and where external text stops being data
 

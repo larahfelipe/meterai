@@ -395,11 +395,11 @@ func (p *Presenter) preferencesSummary(prefs *identity.Preferences) string {
 	return strings.Join(parts, preferenceSeparator)
 }
 
-// AccountRows describe whose subscription one provider is. They are the only
-// rows in a provider's own submenu: everything a user reads at a glance — the
-// meters, the configured model — is operational state and stays on the first
-// level, while the fields that identify an account are consulted rarely and
-// would be read by anyone watching a shared screen.
+// AccountRows describe whose subscription one provider is. They sit behind the
+// provider's own entry in the list rather than beside its meters, because the
+// fields that identify an account are consulted rarely and would be read by
+// anyone watching a shared screen, unlike the meters and the configured model
+// above them in that same submenu (§3.8).
 //
 // Rows for fields the CLI never recorded are omitted rather than rendered empty,
 // and a nil account yields none at all.

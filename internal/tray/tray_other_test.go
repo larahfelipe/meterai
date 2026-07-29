@@ -29,11 +29,12 @@ func TestRenderWritesEveryMeterAndTheStatusLine(t *testing.T) {
 
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	// A blank line, the instant, the app heading, the active provider, one line
-	// per meter, the status line, that provider's entry in the list and the row
-	// heading the submenu behind it, then the five settings rows. No CLI documents
-	// are given here, so neither the preferences row nor any account row appears.
-	if len(lines) != 14 {
-		t.Fatalf("output has %d lines, want 14:\n%s", len(lines), out.String())
+	// per meter, the status line, that provider's entry in the list, the row
+	// heading the submenu behind it, and its own copy of the same two meter
+	// lines, then the five settings rows. No CLI documents are given here, so
+	// neither preferences row nor any account row appears.
+	if len(lines) != 16 {
+		t.Fatalf("output has %d lines, want 16:\n%s", len(lines), out.String())
 	}
 	if !strings.Contains(lines[1], now.Format("2006-01-02")) {
 		t.Errorf("banner = %q, want the observation instant", lines[1])
@@ -60,16 +61,24 @@ func TestRenderWritesEveryMeterAndTheStatusLine(t *testing.T) {
 	if !strings.Contains(lines[8], "Claude Pro") {
 		t.Errorf("submenu heading = %q, want the plan", lines[8])
 	}
+	// The provider's own submenu carries its own copy of the meter rows, the
+	// same two lines the first level already showed for it.
+	if !strings.Contains(lines[9], "Session (5h)") || !strings.Contains(lines[9], "23%") {
+		t.Errorf("submenu meter line = %q", lines[9])
+	}
+	if !strings.Contains(lines[10], "Weekly (7d)") || !strings.Contains(lines[10], "74%") {
+		t.Errorf("submenu meter line = %q", lines[10])
+	}
 	// The usage-alert group states the pair, and each threshold restates its own
 	// half one level in, exactly as the menu does.
-	if !strings.Contains(lines[9], "75%") || !strings.Contains(lines[9], "90%") {
-		t.Errorf("usage alerts line = %q, want both thresholds", lines[9])
+	if !strings.Contains(lines[11], "75%") || !strings.Contains(lines[11], "90%") {
+		t.Errorf("usage alerts line = %q, want both thresholds", lines[11])
 	}
-	if !strings.Contains(lines[10], "75%") || !strings.Contains(lines[11], "90%") {
-		t.Errorf("threshold lines = %q, %q", lines[10], lines[11])
+	if !strings.Contains(lines[12], "75%") || !strings.Contains(lines[13], "90%") {
+		t.Errorf("threshold lines = %q, %q", lines[12], lines[13])
 	}
-	if !strings.Contains(lines[12], "5 min") || !strings.Contains(lines[13], "English (US)") {
-		t.Errorf("settings lines = %q, %q", lines[12], lines[13])
+	if !strings.Contains(lines[14], "5 min") || !strings.Contains(lines[15], "English (US)") {
+		t.Errorf("settings lines = %q, %q", lines[14], lines[15])
 	}
 }
 
@@ -81,6 +90,37 @@ func TestRenderWritesTheAccountBehindItsProvider(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output does not carry %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// A provider that never holds the first level — every provider past the
+// first, permanently, by construction (§3.8) — must still show its own quota
+// figures somewhere, or its subscription is monitored but invisible. They show
+// up behind its own entry in the provider list, the same rows the active
+// provider carries at the first level.
+func TestRenderShowsANonActiveProvidersOwnMeters(t *testing.T) {
+	second := Subscription{
+		Vendor: "openrouter",
+		State: poll.State{Snapshot: &quota.Snapshot{
+			Vendor: "openrouter", Plan: "team",
+			Meters: []quota.Meter{&quota.Utilization{
+				MeterID: "openrouter:session", Name: "session", Percent: 61,
+			}},
+		}},
+	}
+
+	var out bytes.Buffer
+	render(&out, presenterFor(t, i18n.LangEnUS), Subscriptions{live(), second}, now)
+
+	// The reading belongs behind the second provider's own entry, not floating
+	// anywhere in the output: cut everything up to its list entry and assert the
+	// figure appears only after that point.
+	_, behindSecondEntry, found := strings.Cut(out.String(), "  Openrouter\n")
+	if !found {
+		t.Fatalf("output does not list the second provider:\n%s", out.String())
+	}
+	if !strings.Contains(behindSecondEntry, "session") || !strings.Contains(behindSecondEntry, "61%") {
+		t.Errorf("the second provider's own meter does not appear behind its entry:\n%s", out.String())
 	}
 }
 

@@ -98,11 +98,17 @@ func render(w io.Writer, presenter *Presenter, subs Subscriptions, now time.Time
 	fmt.Fprintf(w, "  %s\n", presenter.StatusText(active, now))
 
 	// The provider list, and behind each entry the submenu it opens: the vendor
-	// with what it sells, then that account's fields. A terminal has no submenus,
-	// so nesting is the one thing this has to express with indentation.
+	// with what it sells, that provider's own preferences and meters — the same
+	// rows the first level shows for the active one — then that account's
+	// fields. A terminal has no submenus, so nesting is the one thing this has
+	// to express with indentation.
 	for _, sub := range subs {
 		writeRow(w, presenter.ProviderListRow(sub))
 		writeRow(w, indent(presenter.ProviderRow(sub)))
+		writeRow(w, indent(presenter.PreferencesRow(sub)))
+		for _, row := range presenter.MeterRows(sub, now) {
+			writeRow(w, indent(row))
+		}
 		for _, row := range presenter.AccountRows(sub) {
 			writeRow(w, indent(row))
 		}

@@ -111,9 +111,13 @@ Run `meterAI.exe`. The icon appears in the notification area.
     it, not every few minutes to redraw a caption;
   - _Providers_, _Settings_ and _Quit_.
 - **Providers** lists every monitored subscription by name, one entry each, and
-  opens on the plan and the account behind it — name, e-mail, organization.
-  Account details live there rather than on the first level, which is what keeps
-  an address off the screen until it is asked for.
+  opens on that provider's own plan, configured model, quota windows — the same
+  rows the top level shows for whichever provider is first — and the account
+  behind it: name, e-mail, organization. This is the only place a second or
+  third provider's own figures appear, since only one provider holds the top
+  level at a time; account details live here rather than on the first level
+  regardless, which is what keeps an address off the screen until it is asked
+  for.
 - **Settings** show the value in force beside their name and change the usage
   alerts, the update cadence and the language without a restart. Each change is
   written to the config file before it is applied, so the menu never shows a

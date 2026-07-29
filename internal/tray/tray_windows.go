@@ -109,17 +109,26 @@ func forwardChoice[T any](ctx context.Context, clicked <-chan struct{}, chosen c
 	}()
 }
 
-// providerEntry is one provider's row in the provider list, and the account
-// submenu behind it. Exactly one is allocated per configured provider, so a
-// second vendor adds an entry to this slice and changes nothing else about the
-// menu.
+// providerEntry is one provider's row in the provider list, and the submenu
+// behind it: that provider's own copy of everything the first level shows for
+// the active provider, plus the account fields the first level never shows at
+// all. Exactly one is allocated per configured provider, so a second vendor
+// adds an entry to this slice and changes nothing else about the menu — this
+// is what makes a provider that never holds the first level (§3.8) still show
+// its own quota figures somewhere.
 type providerEntry struct {
 	// row opens the submenu and carries the provider's own name and plan, the
 	// same grammar the active provider uses at the first level.
 	row *systray.MenuItem
 	// context repeats that name inside the submenu, so a list of several
-	// providers cannot leave the user reading account fields with no idea whose.
-	context     *systray.MenuItem
+	// providers cannot leave the user reading meters or account fields with no
+	// idea whose.
+	context *systray.MenuItem
+	// prefs and meters mirror the first level's own rows (§3.8's "operational
+	// state") for this provider specifically, so a provider that is not the
+	// active one is not the one provider with nothing to show.
+	prefs       *systray.MenuItem
+	meters      []*systray.MenuItem
 	accountRows []*systray.MenuItem
 }
 
@@ -245,13 +254,21 @@ func newMenuView(wiring Wiring) *menuView {
 	return view
 }
 
-// newProviderEntry allocates one provider's list row and the account submenu
-// under it. The separator below the context row is added here and never removed,
-// which is safe because a provider entry always has that row above it.
+// newProviderEntry allocates one provider's list row and its submenu: that
+// provider's own context, preferences and meter rows — the same three the
+// first level shows for the active provider — followed by its account rows.
+// The separator between the two groups is added here and never removed, which
+// is safe because a provider entry always has the operational rows above it.
 func newProviderEntry(parent *systray.MenuItem) providerEntry {
 	entry := providerEntry{row: parent.AddSubMenuItem("", "")}
 	entry.context = entry.row.AddSubMenuItem("", "")
 	entry.context.Disable()
+
+	entry.prefs = addSubReadout(entry.row)
+	entry.meters = make([]*systray.MenuItem, maxMeterRows)
+	for i := range entry.meters {
+		entry.meters[i] = addSubReadout(entry.row)
+	}
 	entry.row.AddSeparator()
 
 	entry.accountRows = make([]*systray.MenuItem, maxAccountRows)
@@ -262,6 +279,15 @@ func newProviderEntry(parent *systray.MenuItem) providerEntry {
 		entry.accountRows[i] = item
 	}
 	return entry
+}
+
+// addSubReadout is addReadout for a row nested inside a submenu rather than at
+// the first level.
+func addSubReadout(parent *systray.MenuItem) *systray.MenuItem {
+	item := parent.AddSubMenuItem("", "")
+	item.Disable()
+	item.Hide()
+	return item
 }
 
 // addReadout creates a row that displays a value rather than accepting a click.
@@ -417,7 +443,7 @@ func (v *menuView) apply(now time.Time) {
 	setReadout(v.prefs, v.presenter.PreferencesRow(active))
 	applyRows(v.meters, v.presenter.MeterRows(active, now))
 	v.status.SetTitle(v.presenter.StatusText(active, now))
-	v.applyProviders(subs)
+	v.applyProviders(subs, now)
 
 	percent, level, stale := v.presenter.IconState(active)
 	if icon := trayicon.Render(percent, level, stale); !bytes.Equal(icon, v.lastIcon) {
@@ -432,9 +458,14 @@ func (v *menuView) apply(now time.Time) {
 // documents could not be read still lists the provider, because the entry names
 // what is being monitored and only the fields under it come from those documents.
 //
+// Every entry gets its own copy of the operational rows (§3.8) the first level
+// shows for the active provider alone, so a provider that never holds that
+// position — every provider past the first, permanently — still shows what it
+// is reporting somewhere rather than only its name and its account fields.
+//
 // An entry that cannot name itself at all is hidden rather than listed blank,
 // and a list left with nothing in it hides the parent that opens it.
-func (v *menuView) applyProviders(subs Subscriptions) {
+func (v *menuView) applyProviders(subs Subscriptions, now time.Time) {
 	listed := 0
 	for i, entry := range v.providerRows {
 		sub := subs[i]
@@ -447,6 +478,8 @@ func (v *menuView) applyProviders(subs Subscriptions) {
 		// The submenu heads itself with the vendor *and* what it sells, which is
 		// the qualifier the list entry deliberately leaves out.
 		entry.context.SetTitle(MenuRowTitle(v.presenter.ProviderRow(sub)))
+		setReadout(entry.prefs, v.presenter.PreferencesRow(sub))
+		applyRows(entry.meters, v.presenter.MeterRows(sub, now))
 		applyRows(entry.accountRows, v.presenter.AccountRows(sub))
 		entry.row.Show()
 		listed++

@@ -291,6 +291,33 @@ func TestAccountRowsNeverExceedThePreAllocatedRows(t *testing.T) {
 	}
 }
 
+// The provider submenu carries no separator between its operational rows and its
+// account rows, and this is the fact that decision rests on: the account group is
+// legitimately empty, permanently for a vendor whose CLI keeps no such document
+// (openai.NoIdentity) and transiently for every provider between startup and its
+// first identity read. A separator cannot be hidden (§3.8), so one placed there
+// would sit at the bottom of the submenu with nothing under it.
+//
+// If this ever starts failing because AccountRows always yields a row, the
+// separator becomes safe to reintroduce — which is the only reason to assert a
+// negative here.
+func TestAccountRowsAreEmptyWhenTheCLIKeepsNoAccountDocument(t *testing.T) {
+	presenter := presenterFor(t, i18n.LangEnUS)
+	for name, sub := range map[string]Subscription{
+		"vendor with no account document": {Vendor: "openai", State: liveState()},
+		"before the first identity read":  {Vendor: "anthropic"},
+		"account recorded but all fields empty": {
+			Vendor: "anthropic", Account: &identity.Account{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if rows := presenter.AccountRows(sub); len(rows) != 0 {
+				t.Errorf("AccountRows = %+v, want none", rows)
+			}
+		})
+	}
+}
+
 // An account field is not a quantity, so nothing in that submenu carries a gauge.
 func TestAccountRowsCarryNoGauge(t *testing.T) {
 	for _, row := range presenterFor(t, i18n.LangEnUS).AccountRows(live()) {

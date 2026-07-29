@@ -321,6 +321,18 @@ entry for exactly that reason; the fields that identify an account are consulted
 by everyone watching a shared screen, so they alone stay behind the provider's entry and never reach
 the first level at all. A test asserts no account field reaches the first level.
 
+**A provider's submenu carries no separator**, and that is the same constraint one level down, not a
+different rule. A separator cannot be hidden, so it may never bound a group that can be empty — the
+reason only one provider holds the first level. Inside a provider's own submenu the only row
+guaranteed a caption is `context`: the preferences row is empty until that CLI's settings document is
+read, the meter rows until the first successful poll, and the account rows are empty *permanently*
+for a vendor whose CLI keeps no such document (`openai.NoIdentity`). A divider between the
+operational rows and the account rows therefore sits at the bottom of the OpenAI submenu with nothing
+under it, for the life of the process. The rows name themselves (`Account`, `E-mail`), which is what
+the grouping was buying; `TestAccountRowsAreEmptyWhenTheCLIKeepsNoAccountDocument` pins the fact the
+removal rests on, so a future change that makes the account group non-empty is what makes a separator
+there safe again.
+
 ### 3.9 Menu row grammar, and where external text stops being data
 
 Every row obeys one grammar: what it is on the left, what it currently reads on the right.

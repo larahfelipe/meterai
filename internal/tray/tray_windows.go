@@ -257,8 +257,15 @@ func newMenuView(wiring Wiring) *menuView {
 // newProviderEntry allocates one provider's list row and its submenu: that
 // provider's own context, preferences and meter rows — the same three the
 // first level shows for the active provider — followed by its account rows.
-// The separator between the two groups is added here and never removed, which
-// is safe because a provider entry always has the operational rows above it.
+//
+// It carries no separator, for the reason §3.8 gives for the first level one
+// level up: a separator cannot be hidden, so it may never bound a group that
+// can be empty. Only `context` is guaranteed to have a caption here. The
+// account rows below are empty for a whole vendor permanently — openai.NoIdentity
+// reports no account by construction — and for every provider between startup
+// and its first identity read, so a divider between the two groups would sit at
+// the bottom of the submenu with nothing under it. The rows name themselves
+// ("Account", "E-mail"), which is what the grouping was buying.
 func newProviderEntry(parent *systray.MenuItem) providerEntry {
 	entry := providerEntry{row: parent.AddSubMenuItem("", "")}
 	entry.context = entry.row.AddSubMenuItem("", "")
@@ -269,7 +276,6 @@ func newProviderEntry(parent *systray.MenuItem) providerEntry {
 	for i := range entry.meters {
 		entry.meters[i] = addSubReadout(entry.row)
 	}
-	entry.row.AddSeparator()
 
 	entry.accountRows = make([]*systray.MenuItem, maxAccountRows)
 	for i := range entry.accountRows {

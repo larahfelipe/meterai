@@ -115,12 +115,18 @@ func TestRenderShowsANonActiveProvidersOwnMeters(t *testing.T) {
 	// The reading belongs behind the second provider's own entry, not floating
 	// anywhere in the output: cut everything up to its list entry and assert the
 	// figure appears only after that point.
-	_, behindSecondEntry, found := strings.Cut(out.String(), "  Openrouter\n")
+	beforeSecondEntry, behindSecondEntry, found := strings.Cut(out.String(), "  Openrouter\n")
 	if !found {
 		t.Fatalf("output does not list the second provider:\n%s", out.String())
 	}
 	if !strings.Contains(behindSecondEntry, "session") || !strings.Contains(behindSecondEntry, "61%") {
 		t.Errorf("the second provider's own meter does not appear behind its entry:\n%s", out.String())
+	}
+	// And nowhere before it. The figure is what has to stay put, not just the
+	// vendor name: a reading that leaks upward is attributed to the active
+	// provider, which is worse than the omission this test exists for.
+	if strings.Contains(beforeSecondEntry, "61%") {
+		t.Errorf("a non-active provider's reading reached the first level:\n%s", beforeSecondEntry)
 	}
 }
 

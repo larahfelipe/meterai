@@ -99,9 +99,14 @@ func render(w io.Writer, presenter *Presenter, subs Subscriptions, now time.Time
 
 	// The provider list, and behind each entry the submenu it opens: the vendor
 	// with what it sells, that provider's own preferences and meters — the same
-	// rows the first level shows for the active one — then that account's
-	// fields. A terminal has no submenus, so nesting is the one thing this has
-	// to express with indentation.
+	// rows the first level shows for the active one — then that provider's own
+	// status line and that account's fields. A terminal has no submenus, so
+	// nesting is the one thing this has to express with indentation.
+	//
+	// The status line matters most here: it is the one row that still says
+	// something when the meters above it are empty because that provider's own
+	// poll is failing, which is otherwise indistinguishable from a provider that
+	// has simply never been asked.
 	for _, sub := range subs {
 		writeRow(w, presenter.ProviderListRow(sub))
 		writeRow(w, indent(presenter.ProviderRow(sub)))
@@ -109,6 +114,7 @@ func render(w io.Writer, presenter *Presenter, subs Subscriptions, now time.Time
 		for _, row := range presenter.MeterRows(sub, now) {
 			writeRow(w, indent(row))
 		}
+		fmt.Fprintf(w, "      %s\n", presenter.StatusText(sub, now))
 		for _, row := range presenter.AccountRows(sub) {
 			writeRow(w, indent(row))
 		}

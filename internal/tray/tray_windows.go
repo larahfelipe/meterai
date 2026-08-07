@@ -127,8 +127,15 @@ type providerEntry struct {
 	// prefs and meters mirror the first level's own rows (§3.8's "operational
 	// state") for this provider specifically, so a provider that is not the
 	// active one is not the one provider with nothing to show.
-	prefs       *systray.MenuItem
-	meters      []*systray.MenuItem
+	prefs  *systray.MenuItem
+	meters []*systray.MenuItem
+	// status is this provider's own StatusText: "Polling…", how stale the
+	// reading is, or why the last poll failed. Without it a provider whose poll
+	// is failing — a rejected credential, an unreachable endpoint, a decode
+	// error — looks identical to one that simply has nothing to report yet,
+	// which is indistinguishable from broken. The active provider states this at
+	// the first level already; every other provider only has this row for it.
+	status      *systray.MenuItem
 	accountRows []*systray.MenuItem
 }
 
@@ -255,17 +262,22 @@ func newMenuView(wiring Wiring) *menuView {
 }
 
 // newProviderEntry allocates one provider's list row and its submenu: that
-// provider's own context, preferences and meter rows — the same three the
-// first level shows for the active provider — followed by its account rows.
+// provider's own context, preferences, meter and status rows — the same four
+// the first level shows for the active provider — followed by its account
+// rows. status is what the first level calls StatusText: this is the one row
+// visible when meters are not, since a poll that is failing produces no
+// meters at all, and it is what lets that be told apart from a provider that
+// has simply never been asked.
 //
 // It carries no separator, for the reason §3.8 gives for the first level one
 // level up: a separator cannot be hidden, so it may never bound a group that
-// can be empty. Only `context` is guaranteed to have a caption here. The
-// account rows below are empty for a whole vendor permanently — openai.NoIdentity
-// reports no account by construction — and for every provider between startup
-// and its first identity read, so a divider between the two groups would sit at
-// the bottom of the submenu with nothing under it. The rows name themselves
-// ("Account", "E-mail"), which is what the grouping was buying.
+// can be empty. Only `context` and `status` are guaranteed to have a caption
+// here. The account rows below are empty for a whole vendor permanently —
+// openai.NoIdentity reports no account by construction — and for every
+// provider between startup and its first identity read, so a divider between
+// the two groups would sit at the bottom of the submenu with nothing under
+// it. The rows name themselves ("Account", "E-mail"), which is what the
+// grouping was buying.
 func newProviderEntry(parent *systray.MenuItem) providerEntry {
 	entry := providerEntry{row: parent.AddSubMenuItem("", "")}
 	entry.context = entry.row.AddSubMenuItem("", "")
@@ -276,6 +288,7 @@ func newProviderEntry(parent *systray.MenuItem) providerEntry {
 	for i := range entry.meters {
 		entry.meters[i] = addSubReadout(entry.row)
 	}
+	entry.status = addSubReadout(entry.row)
 
 	entry.accountRows = make([]*systray.MenuItem, maxAccountRows)
 	for i := range entry.accountRows {
@@ -486,6 +499,11 @@ func (v *menuView) applyProviders(subs Subscriptions, now time.Time) {
 		entry.context.SetTitle(MenuRowTitle(v.presenter.ProviderRow(sub)))
 		setReadout(entry.prefs, v.presenter.PreferencesRow(sub))
 		applyRows(entry.meters, v.presenter.MeterRows(sub, now))
+		// Unlike the rows above, this one is never empty: StatusText always has
+		// something to say, which is why it is shown unconditionally rather than
+		// through setReadout's "hide when blank" rule.
+		entry.status.SetTitle(v.presenter.StatusText(sub, now))
+		entry.status.Show()
 		applyRows(entry.accountRows, v.presenter.AccountRows(sub))
 		entry.row.Show()
 		listed++

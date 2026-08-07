@@ -304,16 +304,23 @@ hover help would have to be owner-drawn, so a row that cannot say what it means 
 cannot say it at all. The tooltip catalogue keys do not exist for that reason.
 
 **Every provider's own entry carries its own copy of the operational rows, not only the active
-provider's.** `providerEntry` allocates a `context`, a `prefs` row and `maxMeterRows` meter rows —
-the same three `ProviderRow`/`PreferencesRow`/`MeterRows` produce for the active provider at the first
-level — ahead of its `accountRows`, and `applyProviders` fills all of them from that provider's own
-`Subscription`. This is what keeps a provider that never holds the first level (every provider past
-the first, permanently — `Subscriptions.Active` never changes which one that is) from being monitored
-with nothing to show for it: with two vendors configured, the second one's actual quota figures exist
-nowhere else in the menu. The duplication for the *first* provider — its meters appear both at the
-first level and again behind its own list entry — is accepted rather than special-cased away, because
-suppressing it would make one provider's submenu a different shape from every other's, and the list is
-read as a column of equivalent entries.
+provider's.** `providerEntry` allocates a `context`, a `prefs` row, `maxMeterRows` meter rows and a
+`status` row — the same four `ProviderRow`/`PreferencesRow`/`MeterRows`/`StatusText` produce for the
+active provider at the first level — ahead of its `accountRows`, and `applyProviders` fills all of
+them from that provider's own `Subscription`. This is what keeps a provider that never holds the
+first level (every provider past the first, permanently — `Subscriptions.Active` never changes which
+one that is) from being monitored with nothing to show for it: with two vendors configured, the
+second one's actual quota figures exist nowhere else in the menu. The duplication for the *first*
+provider — its rows appear both at the first level and again behind its own list entry — is accepted
+rather than special-cased away, because suppressing it would make one provider's submenu a different
+shape from every other's, and the list is read as a column of equivalent entries.
+
+`status` is not optional the way `prefs` and the meter rows are: `StatusText` never returns an empty
+string, so it is the one row every provider's submenu shows unconditionally, and it is what makes a
+provider whose poll is failing — a rejected credential, an unreachable endpoint, a document that no
+longer decodes — distinguishable from one that has simply never been asked. Without it, both look
+identical: a name with nothing under it. A provider that is not the active one has no other row that
+states this, since the first level's own status line describes only `Subscriptions.Active`.
 
 The split that remains is by how often a value is read, not by which document supplied it: quota
 figures and the configured model are operational state and are duplicated onto every provider's own
@@ -323,8 +330,8 @@ the first level at all. A test asserts no account field reaches the first level.
 
 **A provider's submenu carries no separator**, and that is the same constraint one level down, not a
 different rule. A separator cannot be hidden, so it may never bound a group that can be empty — the
-reason only one provider holds the first level. Inside a provider's own submenu the only row
-guaranteed a caption is `context`: the preferences row is empty until that CLI's settings document is
+reason only one provider holds the first level. Inside a provider's own submenu the rows guaranteed a
+caption are `context` and `status`: the preferences row is empty until that CLI's settings document is
 read, the meter rows until the first successful poll, and the account rows are empty *permanently*
 for a vendor whose CLI keeps no such document (`openai.NoIdentity`). A divider between the
 operational rows and the account rows therefore sits at the bottom of the OpenAI submenu with nothing

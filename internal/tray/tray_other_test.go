@@ -30,11 +30,11 @@ func TestRenderWritesEveryMeterAndTheStatusLine(t *testing.T) {
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	// A blank line, the instant, the app heading, the active provider, one line
 	// per meter, the status line, that provider's entry in the list, the row
-	// heading the submenu behind it, and its own copy of the same two meter
-	// lines, then the five settings rows. No CLI documents are given here, so
-	// neither preferences row nor any account row appears.
-	if len(lines) != 16 {
-		t.Fatalf("output has %d lines, want 16:\n%s", len(lines), out.String())
+	// heading the submenu behind it, its own copy of the same two meter lines,
+	// its own status line, then the five settings rows. No CLI documents are
+	// given here, so neither preferences row nor any account row appears.
+	if len(lines) != 17 {
+		t.Fatalf("output has %d lines, want 17:\n%s", len(lines), out.String())
 	}
 	if !strings.Contains(lines[1], now.Format("2006-01-02")) {
 		t.Errorf("banner = %q, want the observation instant", lines[1])
@@ -69,16 +69,21 @@ func TestRenderWritesEveryMeterAndTheStatusLine(t *testing.T) {
 	if !strings.Contains(lines[10], "Weekly (7d)") || !strings.Contains(lines[10], "74%") {
 		t.Errorf("submenu meter line = %q", lines[10])
 	}
+	// The provider's own submenu restates its own status too, the same line the
+	// first level already showed for it.
+	if !strings.Contains(lines[11], "Updated") {
+		t.Errorf("submenu status line = %q", lines[11])
+	}
 	// The usage-alert group states the pair, and each threshold restates its own
 	// half one level in, exactly as the menu does.
-	if !strings.Contains(lines[11], "75%") || !strings.Contains(lines[11], "90%") {
-		t.Errorf("usage alerts line = %q, want both thresholds", lines[11])
+	if !strings.Contains(lines[12], "75%") || !strings.Contains(lines[12], "90%") {
+		t.Errorf("usage alerts line = %q, want both thresholds", lines[12])
 	}
-	if !strings.Contains(lines[12], "75%") || !strings.Contains(lines[13], "90%") {
-		t.Errorf("threshold lines = %q, %q", lines[12], lines[13])
+	if !strings.Contains(lines[13], "75%") || !strings.Contains(lines[14], "90%") {
+		t.Errorf("threshold lines = %q, %q", lines[13], lines[14])
 	}
-	if !strings.Contains(lines[14], "5 min") || !strings.Contains(lines[15], "English (US)") {
-		t.Errorf("settings lines = %q, %q", lines[14], lines[15])
+	if !strings.Contains(lines[15], "5 min") || !strings.Contains(lines[16], "English (US)") {
+		t.Errorf("settings lines = %q, %q", lines[15], lines[16])
 	}
 }
 
@@ -130,6 +135,32 @@ func TestRenderShowsANonActiveProvidersOwnMeters(t *testing.T) {
 	}
 }
 
+// A non-active provider whose poll is failing has no meters to show, which is
+// exactly what a provider that has never been polled at all also looks like —
+// unless its own status line says why. This is what actually lets "no
+// credential found" be told apart from "not implemented yet" for a second
+// provider, since nothing else in its submenu differs between the two.
+func TestRenderShowsANonActiveProvidersOwnFailure(t *testing.T) {
+	second := Subscription{
+		Vendor: "openai",
+		State: poll.State{LastError: &quota.FetchError{
+			Kind: quota.Unauthorized, Vendor: "openai", RenewHint: "codex login",
+			Err: errors.New("no candidate path holds CLI credentials"),
+		}},
+	}
+
+	var out bytes.Buffer
+	render(&out, presenterFor(t, i18n.LangEnUS), Subscriptions{live(), second}, now)
+
+	_, behindSecondEntry, found := strings.Cut(out.String(), "  Openai\n")
+	if !found {
+		t.Fatalf("output does not list the second provider:\n%s", out.String())
+	}
+	if !strings.Contains(behindSecondEntry, "codex login") {
+		t.Errorf("the second provider's own submenu does not say why it has nothing to show:\n%s", out.String())
+	}
+}
+
 // The provider list is what a second vendor appears in, so it is rendered from
 // the whole slice rather than from the active subscription alone. The first
 // level still describes one provider: only the list grows.
@@ -162,8 +193,9 @@ func TestRenderBeforeTheFirstPollWritesNoReading(t *testing.T) {
 
 	// Nothing has been read yet, so every meter row is absent: a blank line, the
 	// instant, the app heading, the provider named from its key, the status line,
-	// the provider's list entry and submenu heading, and the five settings rows.
-	if got := strings.Count(out.String(), "\n"); got != 12 {
+	// the provider's list entry, its submenu heading, its own status line, and
+	// the five settings rows.
+	if got := strings.Count(out.String(), "\n"); got != 13 {
 		t.Errorf("output has %d lines: %q", got, out.String())
 	}
 	if !strings.Contains(out.String(), "Polling…") {
